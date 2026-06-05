@@ -39,22 +39,26 @@ USE_RSI       = True     # Use RSI to detect real dips/peaks
 RSI_PERIOD    = 14       # Standard RSI period
 RSI_OVERSOLD  = 30       # Buy when RSI < 30 (genuine oversold dip)
 RSI_OVERBOUGHT = 70      # Sell when RSI > 70 (genuine overbought peak)
-PURE_RSI_BUY  = True     # Buy strictly on RSI < RSI_OVERSOLD, bypassing price target check!
+PURE_RSI_BUY  = False    # Require RSI + price target (no blind RSI buys)
 
 # --- Test Capital Limit ---
 TEST_MODE     = True     # LIVE TRADING — full capital
 TEST_CAPITAL  = 100    # Test capital reduced to £100 for bear market
 
 # --- Cycle Control ---
-MAX_CYCLES    = 0       # Max buy/sell cycles per day (0 = unlimited)
-MIN_CYCLES    = 2       # Always attempt at least this many cycles
-DAILY_PROFIT_TARGET = 0  # Stop for the day once this % daily profit is reached (0 = disabled)
+MAX_CYCLES    = 4       # Max 4 buy/sell cycles per day
+MIN_CYCLES    = 1       # Start conservatively
+DAILY_PROFIT_TARGET = 1.0  # Stop for the day after 1% daily profit
+
+# --- Risk Controls ---
+MAX_CONSECUTIVE_LOSSES = 3     # Pause bot after this many consecutive stop-losses
+CONSECUTIVE_LOSS_PAUSE_MINS = 1440  # Pause duration in minutes (1440 = 24h)
 
 # --- ADX Gate ---
 USE_ADX       = True   # Enable ADX ranging filter (blocks trending markets)
-ADX_TIMEFRAME = '1h'    # Timeframe for ADX calculation
+ADX_TIMEFRAME = '15m'   # Timeframe for ADX calculation (faster trend detection)
 ADX_PERIOD    = 14      # ADX period
-ADX_THRESHOLD = 25      # Pause bot when ADX > this (trending market)
+ADX_THRESHOLD = 20      # Pause bot when ADX > this (stricter)
 
 # --- EMA Trend Filter ---
 USE_EMA       = True    # Enable EMA downtrend filter (blocks bear markets)
@@ -140,6 +144,7 @@ def load_state():
 total_realized_pnl = 0.0
 day_realized_pnl = 0.0
 day_start_equity = 0.0
+consecutive_losses = 0
 
 # ============================================================
 # EXCHANGE
@@ -316,7 +321,7 @@ def execute_trade(trade_type, price, usdt_balance, btc_balance):
 # MAIN LOOP
 # ============================================================
 def main():
-    global bought_at, sold_at, total_realized_pnl, cycles_today, day_realized_pnl
+    global bought_at, sold_at, total_realized_pnl, cycles_today, day_realized_pnl, consecutive_losses
     global current_day, day_start_equity, last_indicator_refresh
 
     while True:
@@ -365,7 +370,7 @@ def main():
                     if adx_value is not None:
                         ranging_market = (adx_value[0] < ADX_THRESHOLD) if adx_value else True
                         if not ranging_market:
-                            log(f"⏸️  ADX gate: {adx_value:.2f} > {ADX_THRESHOLD} (trending market, pausing)")
+                            log(f"⏸️  ADX gate: {adx_value[0]:.2f} > {ADX_THRESHOLD} (trending market, pausing)")
                     else:
                         log(f"⚠️  ADX calculation failed, assuming ranging")
                 
@@ -375,17 +380,22 @@ def main():
                     if ema_value is not None:
                         no_downtrend = (price > ema_value[0] * (1 - EMA_BUFFER)) if ema_value else True
                         if not no_downtrend:
-                            log(f"⏸️  EMA gate: {price:.2f} < {ema_value:.2f} (downtrend, pausing)")
+                            log(f"⏸️  EMA gate: {price:.2f} < {ema_value[0]:.2f} (downtrend, pausing)")
                     else:
                         log(f"⚠️  EMA calculation failed, assuming no downtrend")
                 
                 if USE_ADX or USE_EMA:
-                    log(f"Indicators refreshed. ADX:{adx_value:.2f if adx_value else 'off'} EMA:{ema_value:.2f if ema_value else 'off'}")
+                                    adx_str = f'{adx_value[0]:.2f}' if adx_value is not None and adx_value[0] is not None else 'off'
+                ema_str = f'{ema_value[0]:.2f}' if ema_value is not None and ema_value[0] is not None else 'off'
+                log(f"Indicators refreshed. ADX:{adx_str} EMA:{ema_str}")
                 
                 last_indicator_refresh = now_minute
             
             # Gate check: pause all trading if conditions not met
-            bot_allowed = ranging_market and no_downtrend
+            # Uptrend (price > EMA): ALLOW — profit from rising markets
+            # Downtrend (price < EMA): BLOCK — protect capital from falling knives
+            # ADX is advisory only — high ADX in uptrends is fine
+            bot_allowed = no_downtrend
 
             # Get current balance for decisions
             balance_usdt, balance_btc = get_balance()
@@ -399,7 +409,7 @@ def main():
                 next_trade = 'sell'
 
             # --- Buy Logic ---
-            if next_trade == 'buy':
+            if next_trade == 'buy' and bot_allowed:
                 anchor_price = sold_at if sold_at is not None else price
                 next_buy_target = anchor_price * (1 - BUY_MARGIN)
 
@@ -422,6 +432,17 @@ def main():
                     else:
                         log(f"🔴 NO BUY: Price {price:.2f} ({next_buy_target:.2f}) & RSI {current_rsi:.1f} ({RSI_OVERSOLD}) | USDT:{balance_usdt:.2f}")
 
+            elif next_trade == 'buy' and consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+                log(f"⏸️ BUY BLOCKED: {consecutive_losses} consecutive losses > {MAX_CONSECUTIVE_LOSSES}. Cooldown {CONSECUTIVE_LOSS_PAUSE_MINS}min. Reset after profitable sell.")
+
+            elif next_trade == 'buy' and not bot_allowed:
+                if adx_value and adx_value[0] >= ADX_THRESHOLD:
+                    log(f"⏸️ BUY BLOCKED: ADX gate active | ADX:{adx_value[0]:.1f} > {ADX_THRESHOLD}")
+                elif ema_value and not no_downtrend:
+                    log(f"⏸️ BUY BLOCKED: EMA gate active | Price {price:.2f} < EMA {ema_value[0]:.2f}")
+                else:
+                    log(f"⏸️ BUY BLOCKED: Gates inactive (bot_allowed=False)")
+
             # --- Sell Logic ---
             elif next_trade == 'sell':
                 next_sell_target = bought_at * SELL_MARGIN if bought_at is not None else None
@@ -440,8 +461,11 @@ def main():
                 # Check for Stop Loss first
                 if STOP_LOSS_PCT > 0 and bought_at is not None and price < bought_at * (1 - STOP_LOSS_PCT):
                     log(f"🛑 STOP LOSS: price {price:.2f} <= {bought_at * (1 - STOP_LOSS_PCT):.2f} ({STOP_LOSS_PCT*100:.1f}% below buy {bought_at:.2f})")
+                    consecutive_losses += 1
+                    log(f"🔄 Consecutive losses: {consecutive_losses}/{MAX_CONSECUTIVE_LOSSES}")
                     execute_trade('sell', price, balance_usdt, balance_btc)
                 elif sell_condition_price and sell_condition_rsi and balance_btc >= MIN_BTC_DUST:
+                    consecutive_losses = 0  # Reset consecutive losses on profitable sell
                     log(f"🔴 SELL SIGNAL: Price {price:.2f} >= {next_sell_target:.2f} & RSI {current_rsi:.1f} >= {RSI_OVERBOUGHT}")
                     execute_trade('sell', price, balance_usdt, balance_btc)
                 elif sell_condition_price and not USE_RSI and balance_btc >= MIN_BTC_DUST:

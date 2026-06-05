@@ -36,7 +36,11 @@
 </head>
 <body>
   <header>
-    <div><span class="status-dot"></span><span id="header-title">⚡ BTC/USDT Scalping Bot</span></div>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span class="status-dot"></span>
+      <span id="header-title">⚡ BTC/USDT Scalping Bot</span>
+      <span id="market-badge" style="font-size:0.7rem;padding:2px 8px;border-radius:4px;font-weight:bold;background:#da3633;color:#fff;">WAIT</span>
+    </div>
     <div id="header-time" style="font-size:0.75rem; color:#8b949e;">Loading...</div>
   </header>
   <div class="main">
@@ -51,6 +55,8 @@
          <div class="stat"><div class="label">Avg Day P&L</div><div class="value blue" id="stat-avg-pnl">—</div></div>
          <div class="stat"><div class="label">Max Day P&L</div><div class="value green" id="stat-max-pnl">—</div></div>
          <div class="stat"><div class="label">Test Mode</div><div class="value yellow" id="stat-testmode">—</div></div>
+          <div class="stat"><div class="label">Market</div><div class="value white" id="stat-market">—</div></div>
+          <div class="stat"><div class="label">Bot Status</div><div class="value white" id="stat-bot-status">—</div></div>
        </div>
       <div class="chart-area">
         <div id="price-chart"></div>
@@ -148,6 +154,56 @@
           nextEl.className = holdingBTC ? 'value red' : 'value green';
         }
  
+        // --- Market Condition Readiness Evaluation ---
+        const logsEl = data.log || [];
+        const botStatusEl = document.getElementById('stat-bot-status');
+        const marketStatusEl = document.getElementById('stat-market');
+        const badgeEl = document.getElementById('market-badge');
+        let isBotActive = false;
+        if (logsEl.length > 0) {
+          const lastLog = logsEl[logsEl.length - 1];
+          const tsMatch = lastLog.match(/\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC\]/);
+          if (tsMatch) {
+            const logTime = new Date(tsMatch[1] + ' UTC');
+            if ((Date.now() - logTime.getTime()) / 60000 < 10) isBotActive = true;
+          }
+        }
+        if (isBotActive) {
+          if (badgeEl) { badgeEl.innerText = 'ON'; badgeEl.style.backgroundColor = '#3fb950'; badgeEl.style.color = '#0d1117'; }
+          if (marketStatusEl) { marketStatusEl.innerText = 'ACTIVE'; marketStatusEl.className = 'value green'; }
+          if (botStatusEl) { botStatusEl.innerText = 'ON'; botStatusEl.className = 'value green'; }
+        } else {
+          const candles = data.candles || [];
+          let rsiOscillates = false, priceStable = true, adxLow = false;
+          const recentCandles = candles.slice(-12);
+          const hasLowRsi = recentCandles.some(c => c.rsi !== null && c.rsi !== undefined && c.rsi < 35);
+          const hasHighRsi = recentCandles.some(c => c.rsi !== null && c.rsi !== undefined && c.rsi > 65);
+          rsiOscillates = hasLowRsi && hasHighRsi;
+          if (recentCandles.length >= 2) {
+            const firstPrice = recentCandles[0].close;
+            const lastPrice = recentCandles[recentCandles.length - 1].close;
+            const dropPct = ((firstPrice - lastPrice) / firstPrice) * 100;
+            priceStable = dropPct < 3;
+          }
+          const adxLogs = logsEl.filter(l => l.includes('ADX'));
+          if (adxLogs.length > 0) {
+            const lastAdx = adxLogs[adxLogs.length - 1];
+            const adxMatch = lastAdx.match(/ADX:?\s*([\d.]+)/i);
+            if (adxMatch) { adxLow = parseFloat(adxMatch[1]) < 20; }
+          }
+          const score = [rsiOscillates, priceStable, adxLow].filter(Boolean).length;
+          if (badgeEl) {
+            if (score >= 3) { badgeEl.innerText = 'READY'; badgeEl.style.backgroundColor = '#3fb950'; badgeEl.style.color = '#0d1117'; }
+            else if (score >= 2) { badgeEl.innerText = 'SOON'; badgeEl.style.backgroundColor = '#d29922'; badgeEl.style.color = '#0d1117'; }
+            else { badgeEl.innerText = 'WAIT'; badgeEl.style.backgroundColor = '#da3633'; badgeEl.style.color = '#ffffff'; }
+          }
+          if (marketStatusEl) {
+            marketStatusEl.innerText = score >= 3 ? '✔ READY' : (score >= 2 ? '⚠ ALMOST' : '✘ NOT READY');
+            marketStatusEl.className = 'value ' + (score >= 3 ? 'green' : (score >= 2 ? 'yellow' : 'red'));
+          }
+          if (botStatusEl) { botStatusEl.innerText = 'OFF'; botStatusEl.className = 'value red'; }
+        }
+
         const logs = data.log || [];
         document.getElementById('console').innerHTML = logs.map(line => `<div class="log-line ${line.includes('buy')?'buy':line.includes('sell')?'sell':'info'}">${line}</div>`).join('');
  
