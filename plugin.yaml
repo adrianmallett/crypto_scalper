@@ -1,7 +1,7 @@
 name: crypto_scalper
 title: Crypto Scalper
-description: RSI-adaptive volatility scalper with direction-aware ADX/EMA gates and intelligent stop-loss for BTC/USDT on Bybit.
-version: 2.3.0
+description: Pure RSI recovery-confirmation scalper for BTC/USDT on Bybit — buys confirmed bounces, sells only above fee-aware break-even, with stop-loss cooldown and circuit breaker.
+version: 3.0.0
 settings_sections: []
 per_project_config: false
 per_agent_config: false

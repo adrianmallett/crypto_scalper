@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>🤖 Candles Bot — Live Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: 'Courier New', monospace;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    header {
+      background: #161b22;
+      border-bottom: 1px solid #21262d;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1rem; color: #58a6ff; letter-spacing: 2px; }
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #3fb950;
+      box-shadow: 0 0 8px #3fb950;
+      display: inline-block;
+      margin-right: 8px;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      gap: 1px;
+      background: #21262d;
+    }
+    .left {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 0;
+      background: #0d1117;
+    }
+    #price-chart { flex: 1; min-height: 0; }
+    #volume-chart { height: 120px; flex-shrink: 0; border-top: 1px solid #21262d; }
+    #rsi-chart { height: 120px; flex-shrink: 0; border-top: 1px solid #21262d; }
+    .status-bar {
+      display: flex;
+      gap: 0;
+      border-top: 1px solid #21262d;
+      flex-shrink: 0;
+    }
+    .stat {
+      flex: 1;
+      padding: 8px 12px;
+      border-right: 1px solid #21262d;
+      text-align: center;
+    }
+    .stat:last-child { border-right: none; }
+    .stat .label { font-size: 0.6rem; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+    .stat .value { font-size: 0.9rem; font-weight: bold; margin-top: 2px; }
+    .green { color: #3fb950; }
+    .red { color: #f85149; }
+    .yellow { color: #d29922; }
+    .blue { color: #58a6ff; }
+    .white { color: #c9d1d9; }
+    .right {
+      width: 380px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: #0d1117;
+    }
+    .console-header {
+      padding: 8px 12px;
+      background: #161b22;
+      border-bottom: 1px solid #21262d;
+      font-size: 0.7rem;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      flex-shrink: 0;
+    }
+    #console {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      font-size: 0.72rem;
+      line-height: 1.5;
+      scroll-behavior: smooth;
+    }
+    #console::-webkit-scrollbar { width: 4px; }
+    #console::-webkit-scrollbar-track { background: #0d1117; }
+    #console::-webkit-scrollbar-thumb { background: #21262d; }
+    .log-line { margin-bottom: 1px; white-space: pre-wrap; word-break: break-all; }
+    .log-line.buy { color: #3fb950; }
+    .log-line.sell { color: #f85149; }
+    .log-line.error { color: #d29922; }
+    .log-line.info { color: #8b949e; }
+    .log-line.start { color: #58a6ff; }
+    .log-line.paused { color: #8b949e; }
+    .log-line.active { color: #3fb950; }
+    .log-line.refresh { color: #58a6ff; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <span class="status-dot" id="status-dot"></span>
+    <span id="header-title">🤖 CANDLES BOT — BTC/USDT</span>
+  </div>
+  <div style="font-size:0.75rem; color:#8b949e;" id="header-time">Loading...</div>
+</header>
+
+<div class="main">
+  <div class="left">
+    <div class="status-bar">
+      <div class="stat">
+        <div class="label">BTC Price</div>
+        <div class="value white" id="stat-price">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">USDT</div>
+        <div class="value green" id="stat-usdt">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">BTC</div>
+        <div class="value blue" id="stat-btc">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">RSI</div>
+        <div class="value" id="stat-rsi">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Next Buy</div>
+        <div class="value green" id="stat-nextbuy">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Next Sell</div>
+        <div class="value red" id="stat-nextsell">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Test Mode</div>
+        <div class="value" id="stat-test">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Day P&L</div>
+        <div class="value" id="stat-pnl">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Total P&L</div>
+        <div class="value" id="stat-totalpnl">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Max Day P&L</div>
+        <div class="value green" id="stat-maxpnl">—</div>
+      </div>
+    </div>
+    <div id="price-chart"></div>
+    <div id="volume-chart"></div>
+    <div id="rsi-chart"></div>
+  </div>
+
+  <div class="right">
+    <div class="console-header">📋 Live Console</div>
+    <div id="console"></div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// CLOCK
+// ============================================================
+function updateClock() {
+  document.getElementById('header-time').textContent =
+    new Date().toUTCString().replace('GMT', 'UTC');
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ============================================================
+// CONSOLE HELPERS
+// ============================================================
+const consoleEl = document.getElementById('console');
+
+function classifyLine(line) {
+  if (line.includes('BUY') || line.includes('buy')) return 'buy';
+  if (line.includes('SELL') || line.includes('sell')) return 'sell';
+  if (line.includes('Error') || line.includes('error')) return 'error';
+  if (line.includes('starting') || line.includes('Starting')) return 'start';
+  if (line.includes('Refreshing')) return 'refresh';
+  if (line.includes('PAUSED')) return 'paused';
+  if (line.includes('ACTIVE')) return 'active';
+  return 'info';
+}
+
+function addLogLine(line) {
+  const div = document.createElement('div');
+  div.className = 'log-line ' + classifyLine(line);
+  div.textContent = line;
+  consoleEl.appendChild(div);
+  while (consoleEl.children.length > 500) {
+    consoleEl.removeChild(consoleEl.firstChild);
+  }
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+// ============================================================
+// LIGHTWEIGHT CHARTS
+// ============================================================
+const chartEl = document.getElementById('price-chart');
+const chart = LightweightCharts.createChart(chartEl, {
+  layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
+  grid: { vertLines: { color: '#161b22' }, horzLines: { color: '#161b22' } },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  rightPriceScale: { borderColor: '#21262d' },
+  timeScale: { borderColor: '#21262d', timeVisible: true, secondsVisible: false },
+  width: chartEl.offsetWidth,
+  height: chartEl.offsetHeight,
+});
+
+const candleSeries = chart.addCandlestickSeries({
+  upColor: '#3fb950',
+  downColor: '#f85149',
+  borderUpColor: '#3fb950',
+  borderDownColor: '#f85149',
+  wickUpColor: '#3fb950',
+  wickDownColor: '#f85149',
+  autoscaleInfoProvider: (original) => {
+    const res = original();
+    if (!res || !res.priceRange) return res;
+    let lo = res.priceRange.minValue;
+    let hi = res.priceRange.maxValue;
+    if (window.__latestStatus) {
+      const s = window.__latestStatus;
+      if (s.next_sell != null) { lo = Math.min(lo, s.next_sell); hi = Math.max(hi, s.next_sell); }
+      if (s.next_buy != null) { lo = Math.min(lo, s.next_buy); hi = Math.max(hi, s.next_buy); }
+      if (s.stop_loss != null) { lo = Math.min(lo, s.stop_loss); hi = Math.max(hi, s.stop_loss); }
+    }
+    return { priceRange: { minValue: lo, maxValue: hi } };
+  },
+});
+
+// Volume Histogram
+const volumeChartEl = document.getElementById('volume-chart');
+const volumeChart = LightweightCharts.createChart(volumeChartEl, {
+  layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
+  grid: { vertLines: { color: '#161b22' }, horzLines: { color: '#161b22' } },
+  rightPriceScale: { borderColor: '#21262d' },
+  timeScale: { borderColor: '#21262d', visible: false },
+  width: volumeChartEl.offsetWidth,
+  height: volumeChartEl.offsetHeight,
+});
+const volumeSeries = volumeChart.addHistogramSeries({
+  color: '#3fb95055',
+  priceFormat: { type: 'volume' },
+  priceScaleId: 'right',
+});
+volumeChart.priceScale('right').applyOptions({
+  scaleMargins: { top: 0.5, bottom: 0 },
+});
+
+// RSI Indicator
+const rsiChartEl = document.getElementById('rsi-chart');
+const rsiChart = LightweightCharts.createChart(rsiChartEl, {
+  layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
+  grid: { vertLines: { color: '#161b22' }, horzLines: { color: '#161b22' } },
+  rightPriceScale: { borderColor: '#21262d' },
+  timeScale: { borderColor: '#21262d', visible: false },
+  width: rsiChartEl.offsetWidth,
+  height: rsiChartEl.offsetHeight,
+});
+
+const rsiSeries = rsiChart.addLineSeries({
+  color: '#58a6ff',
+  lineWidth: 2,
+  priceScaleId: 'right',
+  lastValueVisible: true,
+  priceLineVisible: false,
+});
+
+const overboughtLine = rsiChart.addLineSeries({
+  color: '#f85149',
+  lineWidth: 1,
+  lineStyle: 2,
+  lastValueVisible: false,
+  priceLineVisible: false,
+});
+
+const oversoldLine = rsiChart.addLineSeries({
+  color: '#3fb950',
+  lineWidth: 1,
+  lineStyle: 2,
+  lastValueVisible: false,
+  priceLineVisible: false,
+});
+
+rsiChart.priceScale('right').applyOptions({
+  scaleMargins: { top: 0.1, bottom: 0.1 },
+  borderVisible: false,
+});
+
+// Resize
+function resizeChart() {
+  chart.applyOptions({ width: chartEl.offsetWidth, height: chartEl.offsetHeight });
+  volumeChart.applyOptions({ width: volumeChartEl.offsetWidth, height: volumeChartEl.offsetHeight });
+  rsiChart.applyOptions({ width: rsiChartEl.offsetWidth, height: rsiChartEl.offsetHeight });
+}
+new ResizeObserver(resizeChart).observe(chartEl);
+new ResizeObserver(resizeChart).observe(volumeChartEl);
+new ResizeObserver(resizeChart).observe(rsiChartEl);
+
+// Sync time scales
+chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+  if (range) { rsiChart.timeScale().setVisibleLogicalRange(range); volumeChart.timeScale().setVisibleLogicalRange(range); }
+});
+rsiChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+  if (range) { chart.timeScale().setVisibleLogicalRange(range); volumeChart.timeScale().setVisibleLogicalRange(range); }
+});
+volumeChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+  if (range) { chart.timeScale().setVisibleLogicalRange(range); rsiChart.timeScale().setVisibleLogicalRange(range); }
+});
+
+// ============================================================
+// DATA REFRESH
+// ============================================================
+const DATA_URL = '/public/trading/data.json';
+let nextBuyLine = null, nextSellLine = null, stopLossLine = null;
+
+async function refreshAll() {
+  try {
+    const res = await fetch(DATA_URL + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+
+    // --- Candles ---
+    const candles = data.candles || [];
+    if (candles.length > 0) {
+      candleSeries.setData(candles);
+      const last = candles[candles.length - 1];
+      document.getElementById('stat-price').textContent = '$' + last.close.toLocaleString(undefined, {minimumFractionDigits: 2});
+    }
+
+    // --- Volume ---
+    const volData = candles.map(c => ({
+      time: c.time,
+      value: c.volume || 0,
+      color: c.close >= c.open ? '#3fb95055' : '#f8514955'
+    }));
+    if (volData.length > 0) volumeSeries.setData(volData);
+
+    // --- RSI ---
+    const rsiData = candles.filter(c => c.rsi !== null && c.rsi !== undefined).map(c => ({ time: c.time, value: c.rsi }));
+    if (rsiData.length > 0) {
+      rsiSeries.setData(rsiData);
+      const times = rsiData.map(d => d.time);
+      overboughtLine.setData(times.map(t => ({ time: t, value: 70 })));
+      oversoldLine.setData(times.map(t => ({ time: t, value: 30 })));
+    }
+
+    // --- Status ---
+    const st = data.status || {};
+    window.__latestStatus = st;
+    if (st.rsi !== null && st.rsi !== undefined) {
+      const rsiVal = parseFloat(st.rsi);
+      const rsiEl = document.getElementById('stat-rsi');
+      rsiEl.textContent = rsiVal.toFixed(1);
+      rsiEl.className = 'value ' + (rsiVal < 30 ? 'blue' : (rsiVal > 70 ? 'red' : 'white'));
+    }
+    if (st.price !== null && st.price !== undefined) {
+      document.getElementById('stat-price').textContent = '$' + parseFloat(st.price).toLocaleString(undefined, {minimumFractionDigits: 2});
+    }
+
+    // --- Balance ---
+    const bal = data.balance || {};
+    if (bal.USDT !== undefined) {
+      document.getElementById('stat-usdt').textContent = '$' + parseFloat(bal.USDT).toFixed(2);
+    }
+    if (bal.BTC !== undefined) {
+      document.getElementById('stat-btc').textContent = parseFloat(bal.BTC).toFixed(7);
+    }
+
+    // --- Test Mode ---
+    const testEl = document.getElementById('stat-test');
+    testEl.textContent = st.test_mode ? 'ON' : 'OFF';
+    testEl.className = 'value ' + (st.test_mode ? 'yellow' : 'white');
+
+    // --- Day P&L ---
+    if (st.day_pnl !== null && st.day_pnl !== undefined) {
+      const pnlEl = document.getElementById('stat-pnl');
+      const pnlVal = parseFloat(st.day_pnl);
+      pnlEl.textContent = (pnlVal >= 0 ? '+' : '') + pnlVal.toFixed(2) + ' USDT';
+      pnlEl.className = 'value ' + (pnlVal >= 0 ? 'green' : 'red');
+    }
+
+    // --- Total P&L ---
+    const tpEl = document.getElementById('stat-totalpnl');
+    if (st.total_pnl != null) {
+      const tpVal = parseFloat(st.total_pnl);
+      tpEl.textContent = (tpVal >= 0 ? '+' : '') + tpVal.toFixed(2) + ' USDT';
+      tpEl.className = 'value ' + (tpVal >= 0 ? 'green' : 'red');
+    }
+
+    // --- Max Day P&L (localStorage) ---
+    const mxEl = document.getElementById('stat-maxpnl');
+    const today = new Date().toISOString().slice(0,10);
+    const dayPnlVal = st.day_pnl != null ? parseFloat(st.day_pnl) : 0;
+    let stored = parseFloat(localStorage.getItem('maxDayPnl_' + today) || '0');
+    if (dayPnlVal > stored) {
+      stored = dayPnlVal;
+      localStorage.setItem('maxDayPnl_' + today, String(stored));
+    }
+    mxEl.textContent = (stored >= 0 ? '+' : '') + stored.toFixed(2) + ' USDT';
+    mxEl.className = 'value ' + (stored >= 0 ? 'green' : 'red');
+
+    // --- Next Buy/Sell ---
+    const nbEl = document.getElementById('stat-nextbuy');
+    const nsEl = document.getElementById('stat-nextsell');
+    if (st.next_buy != null) {
+      nbEl.textContent = '$' + parseFloat(st.next_buy).toLocaleString(undefined, {maximumFractionDigits: 0});
+    } else { nbEl.textContent = '—'; nbEl.className = 'value white'; }
+    if (st.next_sell != null) {
+      nsEl.textContent = '$' + parseFloat(st.next_sell).toLocaleString(undefined, {maximumFractionDigits: 0});
+    } else { nsEl.textContent = '—'; nsEl.className = 'value white'; }
+
+    // --- Price Lines (buy/sell/stop-loss) ---
+    if (nextSellLine) candleSeries.removePriceLine(nextSellLine);
+    if (nextBuyLine) candleSeries.removePriceLine(nextBuyLine);
+    if (stopLossLine) candleSeries.removePriceLine(stopLossLine);
+    nextSellLine = nextBuyLine = stopLossLine = null;
+
+    if (st.next_sell != null) {
+      nextSellLine = candleSeries.createPriceLine({
+        price: st.next_sell,
+        color: '#f85149',
+        lineWidth: 2,
+        lineStyle: 0,
+        axisLabelVisible: true,
+        title: 'SELL \u2265 ' + st.next_sell.toFixed(0)
+      });
+    }
+    if (st.next_buy != null) {
+      nextBuyLine = candleSeries.createPriceLine({
+        price: st.next_buy,
+        color: '#3fb950',
+        lineWidth: 2,
+        lineStyle: 0,
+        axisLabelVisible: true,
+        title: 'BUY \u2264 ' + st.next_buy.toFixed(0)
+      });
+    }
+    if (st.stop_loss != null) {
+      stopLossLine = candleSeries.createPriceLine({
+        price: st.stop_loss,
+        color: '#d29922',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: 'STOP ' + st.stop_loss.toFixed(0)
+      });
+    }
+
+    // --- Log Console ---
+    if (data.log && Array.isArray(data.log)) {
+      consoleEl.innerHTML = '';
+      data.log.forEach(line => addLogLine(line));
+    }
+  } catch(e) { console.warn('Data refresh error', e); }
+}
+
+refreshAll();
+setInterval(refreshAll, 5000);
+</script>
+</body>
+</html>

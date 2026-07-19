@@ -24,18 +24,17 @@ import json
 import time
 import re
 import os
+import ccxt
 import traceback
 from datetime import datetime, timezone
 from collections import deque
-
-import ccxt
 
 # ----------------------------------------------------------------------------
 # Paths
 # ----------------------------------------------------------------------------
 LOG_FILE   = '/a0/usr/projects/trading/bot_output.log'
 STATE_FILE = '/a0/usr/projects/trading/bot_state.json'
-DATA_FILE  = '/a0/webui/public/trading/data.json'
+DATA_FILE  = '/a0/usr/projects/trading/data.json'
 
 # ----------------------------------------------------------------------------
 # Regex patterns for parsing bot_output.log lines
@@ -91,7 +90,10 @@ def parse_log_status(lines):
         'next_buy':  None,
         'next_sell': None,
         'test_mode': False,
-        'day_pnl':   None,
+        'day_pnl':     None,
+        'total_pnl':   None,
+        'bought_at': None,
+        'stop_loss': None,
     }
     balance = {'USDT': None, 'BTC': None}
 
@@ -132,6 +134,7 @@ def parse_log_status(lines):
             if m_sell:
                 status['next_sell'] = float(m_sell.group(1))
 
+
         if status['day_pnl'] is None:
             m = RE_DAY_PNL.search(line)
             if m:
@@ -150,6 +153,14 @@ def parse_log_status(lines):
                (status['next_sell'] is None and balance['USDT'] > 0.01 and status['next_buy'] is not None): # Sufficient USDT implies looking for buy
                 break
 
+
+    # Read total_pnl from bot_state.json (outside loop)
+    try:
+        with open(STATE_FILE) as bf:
+            bs = json.load(bf)
+            status['total_pnl'] = bs.get('total_realized_pnl')
+    except:
+        pass
 
     return status, balance
 
@@ -194,17 +205,43 @@ def fetch_candles(limit=120):
         for i, c in enumerate(ohlcv):
             rsi_val = round(rsis[i], 2) if rsis[i] is not None else None
             out.append({
-                'time':  int(c[0] / 1000),   # seconds for Lightweight Charts
-                'open':  float(c[1]),
-                'high':  float(c[2]),
-                'low':   float(c[3]),
-                'close': float(c[4]),
-                'rsi':   rsi_val,
+                'time':   int(c[0] / 1000),   # seconds for Lightweight Charts
+                'open':   float(c[1]),
+                'high':   float(c[2]),
+                'low':    float(c[3]),
+                'close':  float(c[4]),
+                'volume': float(c[5]),
+                'rsi':    rsi_val,
             })
         return out
     except Exception as e:
         print(f"[fetch_candles] {e}")
         return []
+
+
+def fetch_ticker():
+    """Fetch live ticker price from Bybit. Returns (price, ts) or (None, None)."""
+    try:
+        ticker = exchange.fetch_ticker('BTC/USDT')
+        return ticker['last'], ticker['timestamp']
+    except Exception as e:
+        print(f"[fetch_ticker] {e}")
+        return None, None
+
+
+def is_log_stale(log_lines, max_minutes=10):
+    """Check if the bot log has any line with a recent UTC timestamp."""
+    for line in reversed(log_lines):
+        m = re.search(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC\]', line)
+        if m:
+            try:
+                from datetime import timezone
+                log_dt = datetime.strptime(m.group(1), '%Y-%m-%d %H:%M:%S')
+                elapsed = (datetime.now(tz=timezone.utc) - log_dt.replace(tzinfo=timezone.utc)).total_seconds()
+                return elapsed > max_minutes * 60
+            except:
+                return True
+    return True  # No timestamp found = stale
 
 
 def read_console_log(n=30):
@@ -214,6 +251,7 @@ def read_console_log(n=30):
 
 def write_data(payload):
     try:
+        os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
         tmp = DATA_FILE + '.tmp'
         with open(tmp, 'w') as f:
             json.dump(payload, f, indent=2)
@@ -250,7 +288,37 @@ def main():
             now = time.time()
             if now - last_write_time >= 5:
                 candles = fetch_candles()
+                # --- Live data fallback when bot is OFF ---
+                full_log_lines = tail(LOG_FILE, n=80)
+                stale = is_log_stale(full_log_lines)
+                if stale:
+                    live_price, _ = fetch_ticker()
+                    if live_price is not None:
+                        status['price'] = live_price
+                        status['bot_off'] = True
+                        if candles and len(candles) > 0:
+                            last_candle = candles[-1]
+                            if last_candle.get('rsi') is not None:
+                                status['rsi'] = last_candle['rsi']
+                        if status.get('next_buy') is None and status.get('next_sell') is None:
+                            status['next_buy'] = round(live_price * 0.99, 2)
+                            status['next_sell'] = round(live_price * 1.01, 2)
+                else:
+                    status['bot_off'] = False
+                # -------------------------------------------
                 
+                
+                # Read bot_state.json for bought_at and compute stop_loss
+                try:
+                    with open(STATE_FILE, 'r') as sf:
+                        state = json.load(sf)
+                        bought = state.get('bought_at')
+                        if bought is not None:
+                            status['bought_at'] = bought
+                            status['stop_loss'] = round(bought * 0.99, 2)
+                except:
+                    pass
+
                 payload = {
                     'ts':          int(now),
                     'utc':         datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
