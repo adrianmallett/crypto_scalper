@@ -17,12 +17,12 @@ Old RSI bots buy the moment RSI drops below 30 — often catching a **falling kn
 One line of logic, but it filters out most downtrend traps. You buy slightly above the exact bottom — in exchange for far fewer stop-losses.
 
 ### Sell: Fee-Aware Break-Even
-Every sell must cover the **0.2% round-trip taker fee** (0.1% buy + 0.1% sell). When RSI hits 70+:
+Every sell must clear the **fee-aware floor** (buy × 1.006 = 0.6% gross, ~0.4% net after the 0.2% round-trip taker fee). When RSI hits 70+:
 
 | Condition | Action |
 |-----------|--------|
-| Price ≥ buy × 1.002 | 🔴 **SELL** — guaranteed profit after fees |
-| Price < buy × 1.002 | ⏳ **HOLD** — wait for fee coverage |
+| Price ≥ buy × 1.006 | 🔴 **SELL** — ~0.4% net profit after fees |
+| Price < buy × 1.006 | ⏳ **HOLD** — wait for the fee-aware floor |
 
 No more "profitable" trades that quietly lose money to fees.
 
@@ -89,7 +89,8 @@ python -m http.server 5080
 
 | Version | Change |
 |---------|--------|
-| **3.0.0** | Pure RSI recovery confirmation, fee-aware break-even, stop-loss cooldown, circuit breaker, buy parsing fix |
+| **3.0.1** | Fee-aware sell floor raised to buy × 1.006 (~0.4% net per win) — fixes inverted risk/reward where 5 wins were needed per 1% stop-loss |
+| 3.0.0 | Pure RSI recovery confirmation, fee-aware break-even, stop-loss cooldown, circuit breaker, buy parsing fix |
 | 2.3.0 | Direction-aware ADX/EMA gates (superseded — pure RSI proved more reliable) |
 | 2.2.0 | ADX + EMA trend gates, bear market protection |
 | 2.1.0 | Fee fixes, quoteCoin order mode |

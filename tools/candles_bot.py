@@ -29,7 +29,7 @@ TIMEFRAME     = '1m'
 # --- Trade Margins ---
 BUY_MARGIN    = 0.0025  # Buy when price is 0.25% below last sell
 SELL_MARGIN   = 1.0075  # Sell when price is 0.75% above last buy
-FEE_BUFFER = 1.002  # Break-even threshold: covers 0.2% round-trip taker fees (buy + sell)
+FEE_BUFFER = 1.006  # Fee-aware sell floor: 0.6% gross = ~0.4% net profit after 0.2% round-trip taker fees
 RALLY_REANCHOR_PCT = 0.0050  # Re-anchor sold_at to current price if price rallies 0.50% above last sell
 
 # --- Bollinger Bands ---
@@ -486,7 +486,7 @@ def main():
                     log(f"⏳ Stop-loss cooldown active for {STOP_LOSS_COOLDOWN_SECS}s")
                     execute_trade('sell', price, balance_usdt, balance_btc)
                 elif sell_condition_rsi and bought_at is not None and price >= bought_at * FEE_BUFFER and balance_btc >= MIN_BTC_DUST:
-                    # Fee-aware break-even: only sell when profit covers round-trip fees (0.2%)
+                    # Fee-aware sell floor: only sell at 0.6% gross (~0.4% net) so wins outweigh 1% stop-losses
                     consecutive_losses = 0  # Reset consecutive losses on profitable sell
                     log(f"🔴 SELL SIGNAL (Pure RSI + Fee-aware): RSI {current_rsi:.1f} >= {RSI_OVERBOUGHT} | Price {price:.2f} >= Buy+fees {bought_at * FEE_BUFFER:.2f}")
                     execute_trade('sell', price, balance_usdt, balance_btc)
