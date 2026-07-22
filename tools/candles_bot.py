@@ -44,7 +44,7 @@ PURE_RSI_BUY  = True    # Require RSI + price target (no blind RSI buys)
 
 # --- Test Capital Limit ---
 TEST_MODE     = True     # LIVE TRADING — full capital
-TEST_CAPITAL  = 100    # Start small; raise only after consistent profits
+TEST_CAPITAL  = 100    # 50% of total account value (~1016 USDT)    # Test capital reduced to £100 for bear market
 
 # --- Cycle Control ---
 MAX_CYCLES    = 0       # Unlimited cycles — circuit breaker handles safety       # Max 4 buy/sell cycles per day
@@ -108,13 +108,14 @@ api_secret = secrets['BYBIT_API_SECRET']
 def save_state(bought, sold, total_pnl_val):
     """Persist bought_at and sold_at so restarts don't lose position tracking."""
     try:
-        global cycles_today, day_realized_pnl, current_day
+        global cycles_today, day_realized_pnl, current_day, stop_losses_today
         with open(STATE_FILE, 'w') as f:
             json.dump({
                 'bought_at': bought,
                 'sold_at': sold,
                 'total_realized_pnl': total_pnl_val,
                 'cycles_today': cycles_today if 'cycles_today' in globals() else 0,
+                'stop_losses_today': stop_losses_today if 'stop_losses_today' in globals() else 0,
                 'day_realized_pnl': day_realized_pnl if 'day_realized_pnl' in globals() else 0.0,
                 'current_day': str(current_day) if 'current_day' in globals() else str(datetime.now(timezone.utc).date())
             }, f)
@@ -122,7 +123,7 @@ def save_state(bought, sold, total_pnl_val):
         log(f"⚠️  Could not save state: {e}")
 
 def load_state():
-    """Load persisted state on startup. Returns 6 fields."""
+    """Load persisted state on startup. Returns 7 fields."""
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE) as f:
@@ -136,17 +137,19 @@ def load_state():
                 s.get('total_realized_pnl', 0.0),
                 s.get('cycles_today', 0),
                 s.get('day_realized_pnl', 0.0),
-                s.get('current_day', None)
+                s.get('current_day', None),
+                s.get('stop_losses_today', 0)
             )
     except Exception as e:
         log(f"⚠️  Could not load state: {e}")
-    return None, None, 0.0, 0, 0.0, None
+    return None, None, 0.0, 0, 0.0, None, 0
 
 # Global variables for P&L tracking
 total_realized_pnl = 0.0
 day_realized_pnl = 0.0
 day_start_equity = 0.0
 consecutive_losses = 0
+stop_losses_today = 0  # Daily stop-loss counter (dashboard stat)
 last_stop_loss_time = 0  # Unix timestamp of last stop-loss (for cooldown)
 prev_rsi = 0  # Previous RSI value for recovery confirmation
 
@@ -329,7 +332,7 @@ def execute_trade(trade_type, price, usdt_balance, btc_balance):
 # MAIN LOOP
 # ============================================================
 def main():
-    global bought_at, sold_at, total_realized_pnl, cycles_today, day_realized_pnl, consecutive_losses
+    global bought_at, sold_at, total_realized_pnl, cycles_today, day_realized_pnl, consecutive_losses, stop_losses_today
     global last_stop_loss_time, prev_rsi
     global current_day, day_start_equity, last_indicator_refresh
 
@@ -344,6 +347,7 @@ def main():
                 current_day = today
                 day_realized_pnl = 0.0
                 cycles_today = 0
+                stop_losses_today = 0
                 day_start_equity = 0.0  # Will be reset below
                 save_state(bought_at, sold_at, total_realized_pnl)
 
@@ -481,7 +485,8 @@ def main():
                 if STOP_LOSS_PCT > 0 and bought_at is not None and price < bought_at * (1 - STOP_LOSS_PCT):
                     log(f"🛑 STOP LOSS: price {price:.2f} <= {bought_at * (1 - STOP_LOSS_PCT):.2f} ({STOP_LOSS_PCT*100:.1f}% below buy {bought_at:.2f})")
                     consecutive_losses += 1
-                    log(f"🔄 Consecutive losses: {consecutive_losses}/{MAX_CONSECUTIVE_LOSSES}")
+                    stop_losses_today += 1
+                    log(f"🔄 Consecutive losses: {consecutive_losses}/{MAX_CONSECUTIVE_LOSSES} | Stop-losses today: {stop_losses_today}")
                     last_stop_loss_time = time.time()
                     log(f"⏳ Stop-loss cooldown active for {STOP_LOSS_COOLDOWN_SECS}s")
                     execute_trade('sell', price, balance_usdt, balance_btc)
@@ -517,13 +522,14 @@ def main():
 if __name__ == '__main__':
     # --- Initialise globals before entering main() ---
     current_day = datetime.now(timezone.utc).date()
-    bought_at, sold_at, total_realized_pnl, cycles_today, day_realized_pnl, loaded_day = load_state()
+    bought_at, sold_at, total_realized_pnl, cycles_today, day_realized_pnl, loaded_day, stop_losses_today = load_state()
 
     # Day rollover on startup
     if loaded_day is not None and loaded_day != str(current_day):
         log(f"🗓️ Day rollover detected on startup: {loaded_day} -> {current_day}. Resetting daily P&L.")
         day_realized_pnl = 0.0
         cycles_today = 0
+        stop_losses_today = 0
         day_start_equity = 0.0
 
     # If holding BTC with no buy record, anchor to current price

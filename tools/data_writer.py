@@ -94,6 +94,8 @@ def parse_log_status(lines):
         'total_pnl':   None,
         'bought_at': None,
         'stop_loss': None,
+        'cycles': None,
+        'stop_losses': None,
     }
     balance = {'USDT': None, 'BTC': None}
 
@@ -159,6 +161,8 @@ def parse_log_status(lines):
         with open(STATE_FILE) as bf:
             bs = json.load(bf)
             status['total_pnl'] = bs.get('total_realized_pnl')
+            status['cycles'] = bs.get('cycles_today')
+            status['stop_losses'] = bs.get('stop_losses_today')
     except:
         pass
 

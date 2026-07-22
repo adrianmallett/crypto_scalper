@@ -60,7 +60,7 @@ Scaling ladder (proven in live use): $100 → $250 → $500 → 50% of account �
 |------|---------|
 | `tools/candles_bot.py` | Core bot — exchange connectivity, RSI logic, trade execution, state persistence |
 | `tools/data_writer.py` | Feeder — parses bot log, fetches candles, writes `data.json` every 5s (atomic rename) |
-| `tools/dash_v5.html` | Live dashboard — candlesticks, volume, RSI, buy/sell/stop-loss price lines, console |
+| `tools/dash_v5.html` | Live dashboard — candlesticks, volume, RSI, buy/sell/stop-loss price lines, Cycles/Stop-Losses stat boxes, right-edge auto-follow, console |
 
 ---
 
@@ -89,6 +89,7 @@ python -m http.server 5080
 
 | Version | Change |
 |---------|--------|
+| **3.1.0** | Dashboard upgrade: Cycles Today + Stop Losses stat boxes, right-edge auto-follow charts (re-entrancy-guarded zoom sync), RSI time-axis alignment fix + RSI/threshold lines extended to the right edge |
 | **3.0.1** | Fee-aware sell floor raised to buy × 1.006 (~0.4% net per win) — fixes inverted risk/reward where 5 wins were needed per 1% stop-loss |
 | 3.0.0 | Pure RSI recovery confirmation, fee-aware break-even, stop-loss cooldown, circuit breaker, buy parsing fix |
 | 2.3.0 | Direction-aware ADX/EMA gates (superseded — pure RSI proved more reliable) |

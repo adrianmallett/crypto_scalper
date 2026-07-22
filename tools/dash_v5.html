@@ -171,6 +171,14 @@
         <div class="label">Max Day P&L</div>
         <div class="value green" id="stat-maxpnl">—</div>
       </div>
+      <div class="stat">
+        <div class="label">Cycles Today</div>
+        <div class="value blue" id="stat-cycles">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Stop Losses</div>
+        <div class="value red" id="stat-stops">—</div>
+      </div>
     </div>
     <div id="price-chart"></div>
     <div id="volume-chart"></div>
@@ -230,7 +238,7 @@ const chart = LightweightCharts.createChart(chartEl, {
   grid: { vertLines: { color: '#161b22' }, horzLines: { color: '#161b22' } },
   crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
   rightPriceScale: { borderColor: '#21262d' },
-  timeScale: { borderColor: '#21262d', timeVisible: true, secondsVisible: false },
+  timeScale: { borderColor: '#21262d', timeVisible: true, secondsVisible: false, rightOffset: 5 },
   width: chartEl.offsetWidth,
   height: chartEl.offsetHeight,
 });
@@ -263,7 +271,7 @@ const volumeChart = LightweightCharts.createChart(volumeChartEl, {
   layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
   grid: { vertLines: { color: '#161b22' }, horzLines: { color: '#161b22' } },
   rightPriceScale: { borderColor: '#21262d' },
-  timeScale: { borderColor: '#21262d', visible: false },
+  timeScale: { borderColor: '#21262d', visible: false, rightOffset: 5 },
   width: volumeChartEl.offsetWidth,
   height: volumeChartEl.offsetHeight,
 });
@@ -282,7 +290,7 @@ const rsiChart = LightweightCharts.createChart(rsiChartEl, {
   layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
   grid: { vertLines: { color: '#161b22' }, horzLines: { color: '#161b22' } },
   rightPriceScale: { borderColor: '#21262d' },
-  timeScale: { borderColor: '#21262d', visible: false },
+  timeScale: { borderColor: '#21262d', visible: false, rightOffset: 5 },
   width: rsiChartEl.offsetWidth,
   height: rsiChartEl.offsetHeight,
 });
@@ -326,15 +334,23 @@ new ResizeObserver(resizeChart).observe(chartEl);
 new ResizeObserver(resizeChart).observe(volumeChartEl);
 new ResizeObserver(resizeChart).observe(rsiChartEl);
 
-// Sync time scales
+// Sync time scales (guarded against re-entrancy)
+let stickToRight = true;
+let latestBarCount = 0;
+let syncingRange = false;
+function trackUserPan(range) {
+  if (!range || syncingRange) return;
+  stickToRight = range.to >= latestBarCount - 1;
+}
+chart.timeScale().subscribeVisibleLogicalRangeChange(trackUserPan);
 chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-  if (range) { rsiChart.timeScale().setVisibleLogicalRange(range); volumeChart.timeScale().setVisibleLogicalRange(range); }
+  if (range && !syncingRange) { syncingRange = true; rsiChart.timeScale().setVisibleLogicalRange(range); volumeChart.timeScale().setVisibleLogicalRange(range); syncingRange = false; }
 });
 rsiChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-  if (range) { chart.timeScale().setVisibleLogicalRange(range); volumeChart.timeScale().setVisibleLogicalRange(range); }
+  if (range && !syncingRange) { syncingRange = true; chart.timeScale().setVisibleLogicalRange(range); volumeChart.timeScale().setVisibleLogicalRange(range); syncingRange = false; }
 });
 volumeChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-  if (range) { chart.timeScale().setVisibleLogicalRange(range); rsiChart.timeScale().setVisibleLogicalRange(range); }
+  if (range && !syncingRange) { syncingRange = true; chart.timeScale().setVisibleLogicalRange(range); rsiChart.timeScale().setVisibleLogicalRange(range); syncingRange = false; }
 });
 
 // ============================================================
@@ -366,12 +382,33 @@ async function refreshAll() {
     if (volData.length > 0) volumeSeries.setData(volData);
 
     // --- RSI ---
-    const rsiData = candles.filter(c => c.rsi !== null && c.rsi !== undefined).map(c => ({ time: c.time, value: c.rsi }));
+    // Whitespace points keep the RSI time axis aligned with the candles (RSI is null during warmup bars)
+    const rsiData = candles.map(c => (c.rsi === null || c.rsi === undefined) ? { time: c.time } : { time: c.time, value: c.rsi });
     if (rsiData.length > 0) {
-      rsiSeries.setData(rsiData);
-      const times = rsiData.map(d => d.time);
-      overboughtLine.setData(times.map(t => ({ time: t, value: 70 })));
-      oversoldLine.setData(times.map(t => ({ time: t, value: 30 })));
+      let lastIdx = rsiData.length - 1;
+      while (lastIdx >= 0 && rsiData[lastIdx].value === undefined) lastIdx--;
+      if (lastIdx >= 0) {
+        const lastT = rsiData[lastIdx].time;
+        const lastRsi = rsiData[lastIdx].value;
+        const padTimes = [];
+        for (let i = 1; i <= 5; i++) padTimes.push(lastT + i * 60);
+        rsiSeries.setData(rsiData.concat(padTimes.map(t => ({ time: t, value: lastRsi }))));
+        const times = candles.map(x => x.time).concat(padTimes);
+        overboughtLine.setData(times.map(t => ({ time: t, value: 70 })));
+        oversoldLine.setData(times.map(t => ({ time: t, value: 30 })));
+      }
+    }
+
+    // --- Auto-scroll to right edge when user is there ---
+    latestBarCount = candles.length;
+    if (stickToRight && candles.length > 0) {
+      const n = candles.length;
+      const view = { from: Math.max(0, n - 60), to: n - 1 + 5 };
+      syncingRange = true;
+      chart.timeScale().setVisibleLogicalRange(view);
+      volumeChart.timeScale().setVisibleLogicalRange(view);
+      rsiChart.timeScale().setVisibleLogicalRange(view);
+      syncingRange = false;
     }
 
     // --- Status ---
@@ -427,6 +464,13 @@ async function refreshAll() {
       localStorage.setItem('maxDayPnl_' + today, String(stored));
     }
     mxEl.textContent = (stored >= 0 ? '+' : '') + stored.toFixed(2) + ' USDT';
+    const cycEl = document.getElementById('stat-cycles');
+    if (st.cycles != null) { cycEl.textContent = st.cycles; }
+    const stopsEl = document.getElementById('stat-stops');
+    if (st.stop_losses != null) {
+      stopsEl.textContent = st.stop_losses;
+      stopsEl.className = 'value ' + (st.stop_losses > 0 ? 'red' : 'green');
+    }
     mxEl.className = 'value ' + (stored >= 0 ? 'green' : 'red');
 
     // --- Next Buy/Sell ---
