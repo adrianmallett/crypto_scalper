@@ -54,6 +54,7 @@ DAILY_PROFIT_TARGET = 1.0  # Stop for the day after 1% daily profit
 # --- Risk Controls ---
 MAX_CONSECUTIVE_LOSSES = 3     # Pause bot after this many consecutive stop-losses
 CONSECUTIVE_LOSS_PAUSE_MINS = 1440  # Pause duration in minutes (1440 = 24h)
+ROLLING_STOP_WINDOW_SECS = 86400  # Rolling breaker window (24h)
 
 # --- ADX Gate ---
 USE_ADX       = False   # Enable ADX ranging filter (blocks trending markets)
@@ -108,7 +109,7 @@ api_secret = secrets['BYBIT_API_SECRET']
 def save_state(bought, sold, total_pnl_val):
     """Persist bought_at and sold_at so restarts don't lose position tracking."""
     try:
-        global cycles_today, day_realized_pnl, current_day, stop_losses_today
+        global cycles_today, day_realized_pnl, current_day, stop_losses_today, max_day_realized_pnl, consecutive_losses, last_stop_loss_time, stop_loss_times, breaker_trip_time
         with open(STATE_FILE, 'w') as f:
             json.dump({
                 'bought_at': bought,
@@ -116,6 +117,11 @@ def save_state(bought, sold, total_pnl_val):
                 'total_realized_pnl': total_pnl_val,
                 'cycles_today': cycles_today if 'cycles_today' in globals() else 0,
                 'stop_losses_today': stop_losses_today if 'stop_losses_today' in globals() else 0,
+                'max_day_realized_pnl': max_day_realized_pnl if 'max_day_realized_pnl' in globals() else 0.0,
+                'consecutive_losses': consecutive_losses if 'consecutive_losses' in globals() else 0,
+                'last_stop_loss_time': last_stop_loss_time if 'last_stop_loss_time' in globals() else 0,
+                'stop_loss_times': stop_loss_times if 'stop_loss_times' in globals() else [],
+                'breaker_trip_time': breaker_trip_time if 'breaker_trip_time' in globals() else 0,
                 'day_realized_pnl': day_realized_pnl if 'day_realized_pnl' in globals() else 0.0,
                 'current_day': str(current_day) if 'current_day' in globals() else str(datetime.now(timezone.utc).date())
             }, f)
@@ -123,7 +129,7 @@ def save_state(bought, sold, total_pnl_val):
         log(f"⚠️  Could not save state: {e}")
 
 def load_state():
-    """Load persisted state on startup. Returns 7 fields."""
+    """Load persisted state on startup. Returns 12 fields."""
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE) as f:
@@ -138,19 +144,27 @@ def load_state():
                 s.get('cycles_today', 0),
                 s.get('day_realized_pnl', 0.0),
                 s.get('current_day', None),
-                s.get('stop_losses_today', 0)
+                s.get('stop_losses_today', 0),
+                s.get('max_day_realized_pnl', 0.0),
+                s.get('consecutive_losses', 0),
+                s.get('last_stop_loss_time', 0),
+                s.get('stop_loss_times', []),
+                s.get('breaker_trip_time', 0)
             )
     except Exception as e:
         log(f"⚠️  Could not load state: {e}")
-    return None, None, 0.0, 0, 0.0, None, 0
+    return None, None, 0.0, 0, 0.0, None, 0, 0.0, 0, 0, [], 0
 
 # Global variables for P&L tracking
 total_realized_pnl = 0.0
 day_realized_pnl = 0.0
+max_day_realized_pnl = 0.0  # All-time best day P&L (never resets at rollover)
 day_start_equity = 0.0
 consecutive_losses = 0
 stop_losses_today = 0  # Daily stop-loss counter (dashboard stat)
 last_stop_loss_time = 0  # Unix timestamp of last stop-loss (for cooldown)
+stop_loss_times = []  # Rolling 24h stop-loss timestamps (persisted)
+breaker_trip_time = 0.0  # Breaker pause start (persisted)
 prev_rsi = 0  # Previous RSI value for recovery confirmation
 
 # ============================================================
@@ -253,7 +267,7 @@ def get_current_dyn_margin(df_1m):
 
 
 def execute_trade(trade_type, price, usdt_balance, btc_balance):
-    global total_realized_pnl, day_realized_pnl, bought_at, sold_at, cycles_today
+    global total_realized_pnl, day_realized_pnl, bought_at, sold_at, cycles_today, max_day_realized_pnl
 
     filled_amount = 0
     filled_price = 0
@@ -309,6 +323,8 @@ def execute_trade(trade_type, price, usdt_balance, btc_balance):
                 pnl_usdt = (filled_price - bought_at) * filled_amount
                 total_realized_pnl += pnl_usdt
                 day_realized_pnl += pnl_usdt
+                if day_realized_pnl > max_day_realized_pnl:
+                    max_day_realized_pnl = day_realized_pnl
                 log(f"📈 SELL {filled_amount:.7f} BTC @ {filled_price:.2f} USDT. Received: {cost:.2f} USDT. P&L: {pnl_usdt:.2f} USDT")
             else:
                 log(f"🛑 SELL {filled_amount:.7f} BTC @ {filled_price:.2f} USDT. (No prior 'bought_at' for P&L tracking)")
@@ -332,8 +348,8 @@ def execute_trade(trade_type, price, usdt_balance, btc_balance):
 # MAIN LOOP
 # ============================================================
 def main():
-    global bought_at, sold_at, total_realized_pnl, cycles_today, day_realized_pnl, consecutive_losses, stop_losses_today
-    global last_stop_loss_time, prev_rsi
+    global bought_at, sold_at, total_realized_pnl, cycles_today, day_realized_pnl, consecutive_losses, stop_losses_today, max_day_realized_pnl
+    global last_stop_loss_time, prev_rsi, stop_loss_times, breaker_trip_time
     global current_day, day_start_equity, last_indicator_refresh
 
     current_rsi = None  # Initialize before loop for prev_rsi tracking
@@ -421,13 +437,15 @@ def main():
             next_buy_target = None
             next_sell_target = None
 
+            now_dt = time.time()
+
             # --- DETERMINE PRIMARY TRADE PHASE (based on actual BTC holdings) ---
             next_trade = 'buy'
             if balance_btc >= MIN_BTC_DUST:
                 next_trade = 'sell'
 
             # --- Buy Logic ---
-            if next_trade == 'buy' and bot_allowed:
+            if next_trade == 'buy' and bot_allowed and not (breaker_trip_time > 0 and (now_dt - breaker_trip_time) < CONSECUTIVE_LOSS_PAUSE_MINS * 60):
                 anchor_price = sold_at if sold_at is not None else price
                 next_buy_target = anchor_price * (1 - BUY_MARGIN)
 
@@ -455,8 +473,10 @@ def main():
                     else:
                         log(f"🔴 NO BUY: Price {price:.2f} ({next_buy_target:.2f}) & RSI {current_rsi:.1f} ({RSI_OVERSOLD}) | USDT:{balance_usdt:.2f}")
 
-            elif next_trade == 'buy' and consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
-                log(f"⏸️ BUY BLOCKED: {consecutive_losses} consecutive losses > {MAX_CONSECUTIVE_LOSSES}. Cooldown {CONSECUTIVE_LOSS_PAUSE_MINS}min. Reset after profitable sell.")
+            elif next_trade == 'buy' and breaker_trip_time > 0 and (now_dt - breaker_trip_time) < CONSECUTIVE_LOSS_PAUSE_MINS * 60:
+                remaining = int(CONSECUTIVE_LOSS_PAUSE_MINS * 60 - (now_dt - breaker_trip_time))
+                stops_in_window = len([t for t in stop_loss_times if now_dt - t <= ROLLING_STOP_WINDOW_SECS])
+                log(f"⏸️ BUY BLOCKED: circuit breaker active — {stops_in_window} stops in 24h window. Pause ends in {remaining // 3600}h {(remaining % 3600) // 60}m.")
 
             elif next_trade == 'buy' and not bot_allowed:
                 if adx_value and adx_value >= ADX_THRESHOLD:
@@ -484,15 +504,20 @@ def main():
                 # Check for Stop Loss first
                 if STOP_LOSS_PCT > 0 and bought_at is not None and price < bought_at * (1 - STOP_LOSS_PCT):
                     log(f"🛑 STOP LOSS: price {price:.2f} <= {bought_at * (1 - STOP_LOSS_PCT):.2f} ({STOP_LOSS_PCT*100:.1f}% below buy {bought_at:.2f})")
-                    consecutive_losses += 1
+                    stop_loss_times.append(time.time())
+                    stop_loss_times[:] = [t for t in stop_loss_times if time.time() - t <= ROLLING_STOP_WINDOW_SECS]
+                    consecutive_losses = len(stop_loss_times)  # rolling 24h count (wins do NOT reset)
+                    if consecutive_losses >= MAX_CONSECUTIVE_LOSSES and breaker_trip_time == 0:
+                        breaker_trip_time = time.time()
+                        log(f"🚨 CIRCUIT BREAKER TRIPPED: {consecutive_losses} stop-losses in 24h — buys paused for {CONSECUTIVE_LOSS_PAUSE_MINS}min")
                     stop_losses_today += 1
-                    log(f"🔄 Consecutive losses: {consecutive_losses}/{MAX_CONSECUTIVE_LOSSES} | Stop-losses today: {stop_losses_today}")
+                    log(f"🔄 Stop-losses in 24h: {consecutive_losses}/{MAX_CONSECUTIVE_LOSSES} | Stop-losses today: {stop_losses_today}")
                     last_stop_loss_time = time.time()
                     log(f"⏳ Stop-loss cooldown active for {STOP_LOSS_COOLDOWN_SECS}s")
                     execute_trade('sell', price, balance_usdt, balance_btc)
                 elif sell_condition_rsi and bought_at is not None and price >= bought_at * FEE_BUFFER and balance_btc >= MIN_BTC_DUST:
                     # Fee-aware sell floor: only sell at 0.6% gross (~0.4% net) so wins outweigh 1% stop-losses
-                    consecutive_losses = 0  # Reset consecutive losses on profitable sell
+                    # Rolling 24h breaker: wins do NOT reset the stop-loss window
                     log(f"🔴 SELL SIGNAL (Pure RSI + Fee-aware): RSI {current_rsi:.1f} >= {RSI_OVERBOUGHT} | Price {price:.2f} >= Buy+fees {bought_at * FEE_BUFFER:.2f}")
                     execute_trade('sell', price, balance_usdt, balance_btc)
                 elif sell_condition_rsi and bought_at is not None and price < bought_at * FEE_BUFFER and balance_btc >= MIN_BTC_DUST:
@@ -522,7 +547,7 @@ def main():
 if __name__ == '__main__':
     # --- Initialise globals before entering main() ---
     current_day = datetime.now(timezone.utc).date()
-    bought_at, sold_at, total_realized_pnl, cycles_today, day_realized_pnl, loaded_day, stop_losses_today = load_state()
+    bought_at, sold_at, total_realized_pnl, cycles_today, day_realized_pnl, loaded_day, stop_losses_today, max_day_realized_pnl, consecutive_losses, last_stop_loss_time, stop_loss_times, breaker_trip_time = load_state()
 
     # Day rollover on startup
     if loaded_day is not None and loaded_day != str(current_day):

@@ -91,11 +91,13 @@ def parse_log_status(lines):
         'next_sell': None,
         'test_mode': False,
         'day_pnl':     None,
+        'max_day_pnl': None,
         'total_pnl':   None,
         'bought_at': None,
         'stop_loss': None,
         'cycles': None,
         'stop_losses': None,
+        'consecutive_losses': None,
     }
     balance = {'USDT': None, 'BTC': None}
 
@@ -163,6 +165,8 @@ def parse_log_status(lines):
             status['total_pnl'] = bs.get('total_realized_pnl')
             status['cycles'] = bs.get('cycles_today')
             status['stop_losses'] = bs.get('stop_losses_today')
+            status['consecutive_losses'] = bs.get('consecutive_losses')
+            status['max_day_pnl'] = bs.get('max_day_realized_pnl')
     except:
         pass
 

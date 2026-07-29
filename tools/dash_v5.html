@@ -179,6 +179,10 @@
         <div class="label">Stop Losses</div>
         <div class="value red" id="stat-stops">—</div>
       </div>
+      <div class="stat">
+        <div class="label">Breaker</div>
+        <div class="value green" id="stat-breaker">—</div>
+      </div>
     </div>
     <div id="price-chart"></div>
     <div id="volume-chart"></div>
@@ -384,6 +388,11 @@ async function refreshAll() {
     // --- RSI ---
     // Whitespace points keep the RSI time axis aligned with the candles (RSI is null during warmup bars)
     const rsiData = candles.map(c => (c.rsi === null || c.rsi === undefined) ? { time: c.time } : { time: c.time, value: c.rsi });
+    // Mirror the bot's live RSI (same value as the status bar) at the last candle so chart and bar always agree
+    const liveRsi = (data.status && data.status.rsi !== null && data.status.rsi !== undefined) ? parseFloat(data.status.rsi) : null;
+    if (liveRsi !== null && rsiData.length > 0) {
+      rsiData[rsiData.length - 1] = { time: rsiData[rsiData.length - 1].time, value: liveRsi };
+    }
     if (rsiData.length > 0) {
       let lastIdx = rsiData.length - 1;
       while (lastIdx >= 0 && rsiData[lastIdx].value === undefined) lastIdx--;
@@ -454,16 +463,12 @@ async function refreshAll() {
       tpEl.className = 'value ' + (tpVal >= 0 ? 'green' : 'red');
     }
 
-    // --- Max Day P&L (localStorage) ---
+    // --- Max Day P&L (server-side, persisted in bot_state.json — never resets) ---
     const mxEl = document.getElementById('stat-maxpnl');
-    const today = new Date().toISOString().slice(0,10);
-    const dayPnlVal = st.day_pnl != null ? parseFloat(st.day_pnl) : 0;
-    let stored = parseFloat(localStorage.getItem('maxDayPnl_' + today) || '0');
-    if (dayPnlVal > stored) {
-      stored = dayPnlVal;
-      localStorage.setItem('maxDayPnl_' + today, String(stored));
+    if (st.max_day_pnl != null) {
+      const mx = parseFloat(st.max_day_pnl);
+      mxEl.textContent = (mx >= 0 ? '+' : '') + mx.toFixed(2) + ' USDT';
     }
-    mxEl.textContent = (stored >= 0 ? '+' : '') + stored.toFixed(2) + ' USDT';
     const cycEl = document.getElementById('stat-cycles');
     if (st.cycles != null) { cycEl.textContent = st.cycles; }
     const stopsEl = document.getElementById('stat-stops');
@@ -471,7 +476,13 @@ async function refreshAll() {
       stopsEl.textContent = st.stop_losses;
       stopsEl.className = 'value ' + (st.stop_losses > 0 ? 'red' : 'green');
     }
-    mxEl.className = 'value ' + (stored >= 0 ? 'green' : 'red');
+    const brkEl = document.getElementById('stat-breaker');
+    if (st.consecutive_losses != null) {
+      const cl = parseInt(st.consecutive_losses);
+      brkEl.textContent = cl >= 3 ? 'PAUSED' : cl + '/3';
+      brkEl.className = 'value ' + (cl >= 3 ? 'red' : (cl > 0 ? 'blue' : 'green'));
+    }
+    mxEl.className = 'value ' + ((st.max_day_pnl != null ? parseFloat(st.max_day_pnl) : 0) >= 0 ? 'green' : 'red');
 
     // --- Next Buy/Sell ---
     const nbEl = document.getElementById('stat-nextbuy');
