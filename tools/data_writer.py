@@ -165,7 +165,18 @@ def parse_log_status(lines):
             status['total_pnl'] = bs.get('total_realized_pnl')
             status['cycles'] = bs.get('cycles_today')
             status['stop_losses'] = bs.get('stop_losses_today')
-            status['consecutive_losses'] = bs.get('consecutive_losses')
+            # Effective breaker state: mirror candles_bot.py semantics.
+            # PAUSED only while breaker_trip_time is set and unexpired (1440 min);
+            # otherwise show the live rolling-24h stop count (stale stored value
+            # is never recomputed by the bot once the pause expires).
+            _now = time.time()
+            _btt = bs.get('breaker_trip_time') or 0
+            _stops = bs.get('stop_loss_times') or []
+            _window_count = len([t for t in _stops if _now - t <= 86400])
+            if _btt > 0 and (_now - _btt) < 1440 * 60:
+                status['consecutive_losses'] = 3
+            else:
+                status['consecutive_losses'] = _window_count
             status['max_day_pnl'] = bs.get('max_day_realized_pnl')
     except:
         pass

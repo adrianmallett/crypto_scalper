@@ -28,8 +28,8 @@ TIMEFRAME     = '1m'
 
 # --- Trade Margins ---
 BUY_MARGIN    = 0.0025  # Buy when price is 0.25% below last sell
-SELL_MARGIN   = 1.0075  # Sell when price is 0.75% above last buy
-FEE_BUFFER = 1.006  # Fee-aware sell floor: 0.6% gross = ~0.4% net profit after 0.2% round-trip taker fees
+SELL_MARGIN   = 1.0075  # DEPRECATED 2026-08-13: superseded by FEE_BUFFER (the real sell gate) — kept for reference only
+FEE_BUFFER = 1.010  # Fee-aware sell floor: 1.0% gross = ~0.8% net profit after 0.2% round-trip taker fees (raised 2026-08-13: backtest showed 0.6% net-negative at 65% win rate; breakeven now 60%)
 RALLY_REANCHOR_PCT = 0.0050  # Re-anchor sold_at to current price if price rallies 0.50% above last sell
 
 # --- Bollinger Bands ---
@@ -43,7 +43,7 @@ RSI_OVERBOUGHT = 70      # Sell when RSI > 70 (genuine overbought peak)
 PURE_RSI_BUY  = True    # Require RSI + price target (no blind RSI buys)
 
 # --- Test Capital Limit ---
-TEST_MODE     = True     # LIVE TRADING — full capital
+TEST_MODE     = True      # LIVE TRADING — full capital
 TEST_CAPITAL  = 100    # 50% of total account value (~1016 USDT)    # Test capital reduced to £100 for bear market
 
 # --- Cycle Control ---
@@ -320,12 +320,14 @@ def execute_trade(trade_type, price, usdt_balance, btc_balance):
             sold_at = filled_price
 
             if bought_at:
-                pnl_usdt = (filled_price - bought_at) * filled_amount
+                gross_pnl = (filled_price - bought_at) * filled_amount
+                est_fees = 0.001 * filled_amount * (bought_at + filled_price)  # 0.1% taker on buy + 0.1% on sell
+                pnl_usdt = gross_pnl - est_fees  # Net P&L — matches real balance change
                 total_realized_pnl += pnl_usdt
                 day_realized_pnl += pnl_usdt
                 if day_realized_pnl > max_day_realized_pnl:
                     max_day_realized_pnl = day_realized_pnl
-                log(f"📈 SELL {filled_amount:.7f} BTC @ {filled_price:.2f} USDT. Received: {cost:.2f} USDT. P&L: {pnl_usdt:.2f} USDT")
+                log(f"📈 SELL {filled_amount:.7f} BTC @ {filled_price:.2f} USDT. Received: {cost:.2f} USDT. Net P&L: {pnl_usdt:.2f} USDT (gross {gross_pnl:.2f} - fees {est_fees:.2f})")
             else:
                 log(f"🛑 SELL {filled_amount:.7f} BTC @ {filled_price:.2f} USDT. (No prior 'bought_at' for P&L tracking)")
 
@@ -488,7 +490,7 @@ def main():
 
             # --- Sell Logic ---
             elif next_trade == 'sell':
-                next_sell_target = bought_at * SELL_MARGIN if bought_at is not None else None
+                next_sell_target = bought_at * FEE_BUFFER if bought_at is not None else None  # REAL fee-aware gate — drives dashboard display and no-RSI fallback
 
                 # Re-anchor sold_at if price rallies significantly above last profitable sell
                 if RALLY_REANCHOR_PCT > 0 and sold_at is not None and price > sold_at * (1 + RALLY_REANCHOR_PCT):
@@ -499,7 +501,7 @@ def main():
                 sell_condition_rsi = USE_RSI and current_rsi is not None and current_rsi >= RSI_OVERBOUGHT
                 sell_condition_price = next_sell_target is not None and price >= next_sell_target
 
-                log(f"[DEBUG] next_sell calculation: bought_at={bought_at}, SELL_MARGIN={SELL_MARGIN}, expected_next_sell={next_sell_target}")
+                log(f"[DEBUG] next_sell calculation: bought_at={bought_at}, FEE_BUFFER={FEE_BUFFER}, expected_next_sell={next_sell_target}")
 
                 # Check for Stop Loss first
                 if STOP_LOSS_PCT > 0 and bought_at is not None and price < bought_at * (1 - STOP_LOSS_PCT):
@@ -507,6 +509,9 @@ def main():
                     stop_loss_times.append(time.time())
                     stop_loss_times[:] = [t for t in stop_loss_times if time.time() - t <= ROLLING_STOP_WINDOW_SECS]
                     consecutive_losses = len(stop_loss_times)  # rolling 24h count (wins do NOT reset)
+                    # Re-arm: if a previous breaker's pause has fully expired, clear it so a new 3-stop window trips again
+                    if breaker_trip_time > 0 and (time.time() - breaker_trip_time) >= CONSECUTIVE_LOSS_PAUSE_MINS * 60:
+                        breaker_trip_time = 0
                     if consecutive_losses >= MAX_CONSECUTIVE_LOSSES and breaker_trip_time == 0:
                         breaker_trip_time = time.time()
                         log(f"🚨 CIRCUIT BREAKER TRIPPED: {consecutive_losses} stop-losses in 24h — buys paused for {CONSECUTIVE_LOSS_PAUSE_MINS}min")
@@ -516,7 +521,7 @@ def main():
                     log(f"⏳ Stop-loss cooldown active for {STOP_LOSS_COOLDOWN_SECS}s")
                     execute_trade('sell', price, balance_usdt, balance_btc)
                 elif sell_condition_rsi and bought_at is not None and price >= bought_at * FEE_BUFFER and balance_btc >= MIN_BTC_DUST:
-                    # Fee-aware sell floor: only sell at 0.6% gross (~0.4% net) so wins outweigh 1% stop-losses
+                    # Fee-aware sell floor: only sell at 1.0% gross (~0.8% net) so wins outweigh 1% stop-losses
                     # Rolling 24h breaker: wins do NOT reset the stop-loss window
                     log(f"🔴 SELL SIGNAL (Pure RSI + Fee-aware): RSI {current_rsi:.1f} >= {RSI_OVERBOUGHT} | Price {price:.2f} >= Buy+fees {bought_at * FEE_BUFFER:.2f}")
                     execute_trade('sell', price, balance_usdt, balance_btc)
