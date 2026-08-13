@@ -17,12 +17,12 @@ Old RSI bots buy the moment RSI drops below 30 — often catching a **falling kn
 One line of logic, but it filters out most downtrend traps. You buy slightly above the exact bottom — in exchange for far fewer stop-losses.
 
 ### Sell: Fee-Aware Break-Even
-Every sell must clear the **fee-aware floor** (buy × 1.006 = 0.6% gross, ~0.4% net after the 0.2% round-trip taker fee). When RSI hits 70+:
+Every sell must clear the **fee-aware floor** (buy × 1.010 = 1.0% gross, ~0.8% net after the 0.2% round-trip taker fee). When RSI hits 70+:
 
 | Condition | Action |
 |-----------|--------|
-| Price ≥ buy × 1.006 | 🔴 **SELL** — ~0.4% net profit after fees |
-| Price < buy × 1.006 | ⏳ **HOLD** — wait for the fee-aware floor |
+| Price ≥ buy × 1.010 | 🔴 **SELL** — ~0.8% net profit after fees |
+| Price < buy × 1.010 | ⏳ **HOLD** — wait for the fee-aware floor |
 
 No more "profitable" trades that quietly lose money to fees.
 
@@ -89,6 +89,8 @@ python -m http.server 5080
 
 | Version | Change |
 |---------|--------|
+| **3.3.0** | Net-P&L economics: sell floor buy × 1.010 (~0.8% net per win — backtest showed 0.6% floor was net-negative at real win rates), fee-aware net P&L accounting, dashboard shows real next-sell gate, circuit-breaker re-arm fix, live-computed Breaker chip |
+| **3.2.0** | Rolling circuit breaker (24h window), dashboard Breaker chip, server-side Max Day P&L, breaker state persistence fixes |
 | **3.1.0** | Dashboard upgrade: Cycles Today + Stop Losses stat boxes, right-edge auto-follow charts (re-entrancy-guarded zoom sync), RSI time-axis alignment fix + RSI/threshold lines extended to the right edge |
 | **3.0.1** | Fee-aware sell floor raised to buy × 1.006 (~0.4% net per win) — fixes inverted risk/reward where 5 wins were needed per 1% stop-loss |
 | 3.0.0 | Pure RSI recovery confirmation, fee-aware break-even, stop-loss cooldown, circuit breaker, buy parsing fix |
