@@ -42,12 +42,17 @@ RSI_OVERSOLD  = 30       # Buy when RSI < 30 (genuine oversold dip)
 RSI_OVERBOUGHT = 70      # Sell when RSI > 70 (genuine overbought peak)
 PURE_RSI_BUY  = True    # Require RSI + price target (no blind RSI buys)
 
+# --- Lull Buy-Window Gate (Adrian's discipline 2026-08-24: only buy when the paper chip is green/blue) ---
+USE_LULL_GATE   = True    # Buys only while the paper page BUY WINDOW chip is ON (lull active; blue=deep adds RSI<30 which the RSI cross already covers)
+PAPER_DATA_FILE = '/a0/webui/public/trading/paper_data.json'  # single source of truth — the exact chip Adrian watches
+LULL_MAX_AGE_SECS = 30    # fail safe (no buy) if the paper feed is stale
+
 # --- Test Capital Limit ---
-TEST_MODE     = True      # LIVE TRADING — full capital
-TEST_CAPITAL  = 100    # 50% of total account value (~1016 USDT)    # Test capital reduced to £100 for bear market
+TEST_MODE     = True      # LIVE but capital-capped (orders are real either way — this only limits size per buy, see line ~279)
+TEST_CAPITAL  = 100    # Safe repo default — live runs a higher cap on Adrian's word
 
 # --- Cycle Control ---
-MAX_CYCLES    = 0       # Unlimited cycles — circuit breaker handles safety       # Max 4 buy/sell cycles per day
+MAX_CYCLES    = 4       # Max 4 buy/sell cycles per day (reinstated 2026-08-24 at Adrian's request; enforced in the buy gate below — buys only, sells always allowed)       # Unlimited cycles — circuit breaker handles safety
 MIN_CYCLES    = 1       # Start conservatively
 DAILY_PROFIT_TARGET = 1.0  # Stop for the day after 1% daily profit
 
@@ -187,6 +192,21 @@ exchange = make_exchange()
 # ============================================================
 def log(msg):
     print(f"[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC] {msg}")
+
+def lull_status():
+    """Read the paper page's BUY WINDOW chip (single source of truth Adrian watches).
+    Returns (active, deep, reason). Fail-safe: any error or stale feed -> (False, False, 'feed unavailable').
+    Gate semantics: we require active (lull present = chip green or blue). The blue chip's extra RSI<30
+    condition is already covered by the bot's own RSI recovery-cross trigger (prev RSI <= 30)."""
+    try:
+        with open(PAPER_DATA_FILE) as f:
+            d = json.load(f)
+        if time.time() - d.get('ts', 0) > LULL_MAX_AGE_SECS:
+            return False, False, 'paper feed stale'
+        bw = d.get('buy_window') or {}
+        return bool(bw.get('active')), bool(bw.get('deep')), str(bw.get('reason', ''))
+    except Exception:
+        return False, False, 'feed unavailable'
 
 # ============================================================
 # MARKET DATA
@@ -447,7 +467,9 @@ def main():
                 next_trade = 'sell'
 
             # --- Buy Logic ---
-            if next_trade == 'buy' and bot_allowed and not (breaker_trip_time > 0 and (now_dt - breaker_trip_time) < CONSECUTIVE_LOSS_PAUSE_MINS * 60):
+            # NOTE: all buy-blocking guards MUST live in this condition (or nested inside it) — never in a later elif (dead-code lesson 2026-07-28)
+            lull_active, lull_deep, lull_reason = lull_status() if USE_LULL_GATE else (True, False, 'gate off')
+            if next_trade == 'buy' and bot_allowed and not (breaker_trip_time > 0 and (now_dt - breaker_trip_time) < CONSECUTIVE_LOSS_PAUSE_MINS * 60) and not (MAX_CYCLES > 0 and cycles_today >= MAX_CYCLES) and lull_active:
                 anchor_price = sold_at if sold_at is not None else price
                 next_buy_target = anchor_price * (1 - BUY_MARGIN)
 
@@ -474,6 +496,12 @@ def main():
                         execute_trade('buy', price, balance_usdt, balance_btc)
                     else:
                         log(f"🔴 NO BUY: Price {price:.2f} ({next_buy_target:.2f}) & RSI {current_rsi:.1f} ({RSI_OVERSOLD}) | USDT:{balance_usdt:.2f}")
+
+            elif next_trade == 'buy' and MAX_CYCLES > 0 and cycles_today >= MAX_CYCLES:
+                log(f"⏸️ BUY BLOCKED: daily cycle cap reached ({cycles_today}/{MAX_CYCLES}). Resets at UTC midnight.")
+
+            elif next_trade == 'buy' and USE_LULL_GATE and not lull_active:
+                log(f"⏸️ BUY BLOCKED: no buy window — {lull_reason} (chip not green/blue). Discipline: wait for the lull.")
 
             elif next_trade == 'buy' and breaker_trip_time > 0 and (now_dt - breaker_trip_time) < CONSECUTIVE_LOSS_PAUSE_MINS * 60:
                 remaining = int(CONSECUTIVE_LOSS_PAUSE_MINS * 60 - (now_dt - breaker_trip_time))

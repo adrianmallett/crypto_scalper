@@ -1,7 +1,7 @@
 name: crypto_scalper
 title: Crypto Scalper
-description: Pure RSI recovery-confirmation scalper for BTC/USDT on Bybit — buys confirmed bounces, sells only above fee-aware break-even, with stop-loss cooldown and circuit breaker.
-version: 3.3.0
+description: Pure RSI recovery-confirmation scalper for BTC/USDT on Bybit — buys confirmed bounces, sells only above fee-aware break-even, with stop-loss cooldown, circuit breaker, paper-trading dashboard with volatility-lull buy-window detection, and an optional manual real-order broker.
+version: 3.4.0
 settings_sections: []
 per_project_config: false
 per_agent_config: false

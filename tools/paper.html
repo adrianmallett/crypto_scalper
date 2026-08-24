@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Trading — BTC/USDT</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root{
+    --bg:#0e1117; --panel:#161b22; --border:#2a3340; --text:#e6e9ef;
+    --dim:#8b949e; --green:#26a69a; --red:#ef5350; --amber:#e0a458;
+    --blue:#4f9cf9; --chip:#1f2630;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px}
+  header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  .badge{background:var(--amber);color:#111;font-weight:700;font-size:11px;padding:3px 8px;border-radius:4px;letter-spacing:.5px}
+  .price{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+  .rsi{color:var(--dim)}
+  .chip{padding:5px 12px;border-radius:14px;font-weight:600;font-size:12px;background:var(--chip);border:1px solid var(--border)}
+  .chip.on{background:rgba(38,166,154,.15);border-color:var(--green);color:var(--green)}
+  .chip.deep{background:rgba(79,156,249,.18);border-color:var(--blue);color:var(--blue)}
+  .chip.off{color:var(--dim)}
+  .main{display:flex;gap:12px;padding:12px 16px;align-items:flex-start;flex-wrap:wrap}
+  .chartwrap{flex:1 1 640px;min-width:320px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:8px}
+  #chart{width:100%;height:420px}
+  #rsichart{width:100%;height:120px;margin-top:6px}
+  .side{flex:0 1 320px;min-width:280px;display:flex;flex-direction:column;gap:12px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 14px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin:0 0 10px}
+  .row{display:flex;justify-content:space-between;padding:3px 0;font-variant-numeric:tabular-nums}
+  .row .k{color:var(--dim)}
+  .up{color:var(--green)} .down{color:var(--red)}
+  .btns{display:flex;gap:10px}
+  button{flex:1;padding:14px 10px;font-size:16px;font-weight:700;border:none;border-radius:8px;cursor:pointer;transition:opacity .15s}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  #buyBtn{background:var(--green);color:#fff}
+  #sellBtn{background:var(--red);color:#fff}
+  #resetBtn{background:transparent;border:1px solid var(--border);color:var(--dim);flex:0 0 auto;padding:8px 14px;font-size:12px;font-weight:600}
+  .msg{min-height:18px;font-size:12px;color:var(--amber)}
+  table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+  td,th{padding:4px 6px;text-align:right;border-bottom:1px solid var(--border)}
+  td:first-child,th:first-child{text-align:left}
+  th{color:var(--dim);font-weight:600}
+  .hint{font-size:11px;color:var(--dim);line-height:1.5}
+  .manual{max-width:980px;margin:4px auto 40px;padding:0 16px}
+  .manual h2{font-size:18px;margin:26px 0 6px;border-bottom:1px solid var(--border);padding-bottom:6px}
+  .manual h3{font-size:14px;margin:18px 0 6px;color:var(--amber)}
+  .manual p,.manual li{font-size:13px;line-height:1.7;color:var(--text)}
+  .manual ul,.manual ol{padding-left:22px;margin:6px 0}
+  .manual .cols{display:flex;gap:24px;flex-wrap:wrap}
+  .manual .cols>div{flex:1 1 300px}
+  .manual b{color:#fff}
+  .manual .g{color:var(--green);font-weight:600}
+  .manual .r{color:var(--red);font-weight:600}
+  .manual .b{color:var(--blue);font-weight:600}
+  .manual .a{color:var(--amber);font-weight:600}
+  .manual .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <h1>BTC/USDT Live Trading</h1>
+  <span class="badge" style="background:var(--red);color:#fff">REAL MONEY — live Bybit orders</span>
+  <span class="price" id="price">—</span>
+  <span class="rsi" id="rsi">RSI —</span>
+  <span class="chip off" id="signal">waiting for data…</span>
+</header>
+
+<div class="main">
+  <div class="chartwrap">
+    <div id="chart"></div>
+    <div id="rsichart"></div>
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h2>Trade</h2>
+      <div class="btns">
+        <button id="buyBtn" disabled>BUY</button>
+        <button id="sellBtn" disabled>SELL</button>
+      </div>
+      <div class="msg" id="msg"></div>
+      <div class="hint" id="posHint">No open position. Wait for a green BUY WINDOW signal, then click BUY.</div>
+    </div>
+
+    <div class="card" id="posCard" style="display:none">
+      <h2>Open position</h2>
+      <div class="row"><span class="k">Bought at</span><span id="boughtAt">—</span></div>
+      <div class="row"><span class="k">Sell target (+0.5% net)</span><span class="up" id="target">—</span></div>
+      <div class="row"><span class="k">Stop line (−1%)</span><span class="down" id="stop">—</span></div>
+      <div class="row"><span class="k">Distance to target</span><span id="toTarget">—</span></div>
+      <div class="row"><span class="k">Unrealised P&amp;L (net)</span><span id="upnl">—</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Session</h2>
+      <div class="row"><span class="k">Equity</span><span id="equity">—</span></div>
+      <div class="row"><span class="k">Net vs start</span><span id="netVs">—</span></div>
+      <div class="row"><span class="k">Cycles</span><span id="cycles">—</span></div>
+      <div class="row"><span class="k">Wins / Losses</span><span id="wl">—</span></div>
+      <div class="row"><span class="k">Fees paid</span><span id="fees">—</span></div>
+      <div style="margin-top:8px;text-align:right"><button id="resetBtn">reset session</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Recent trades</h2>
+      <table id="trades"><tr><th>Buy</th><th>Sell</th><th>P&amp;L</th></tr></table>
+    </div>
+
+    <div class="card hint">
+      Signal = last 30 min of candles are quieter than 80% of the 24h average.
+      Blue = lull + RSI under 30. Target line is +0.7% gross so you keep +0.5% after fees.
+      These buttons place REAL Bybit orders — every click moves real money. Session is saved on the server, so it is the same on every device.
+    </div>
+  </div>
+</div>
+
+<div class="manual">
+  <h2>📖 How to use this page</h2>
+
+  <div class="card">
+    <h3>Your daily routine</h3>
+    <ol>
+      <li><b>Morning coffee.</b> Open the page and look at the <b>signal chip</b> at the top.</li>
+      <li><b>Chip grey?</b> No lull right now — close the tab and check back later.</li>
+      <li><b>Chip green or blue?</b> Good conditions. If you like the look of the chart, click <b class="g">BUY</b>.</li>
+      <li>Three lines appear on the chart. Now it's just <b>keeping an eye on it</b> — like the old days.</li>
+      <li>Price reaches the <b class="g">green TARGET</b> line → click <b class="r">SELL</b>. Cycle complete. ✔</li>
+      <li>Price drops to the <b class="r">red STOP</b> line → click <b class="r">SELL</b> too. That's the rule that keeps you safe.</li>
+      <li><b>Two cycles maximum, then walk away</b> — the same discipline that worked for you on Binance.</li>
+    </ol>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h3>The signal chip</h3>
+      <ul>
+        <li><b class="g">Green — BUY WINDOW</b>: the last 30 minutes are quieter than 80% of the 24-hour average. The market is calm — your classic lull.</li>
+        <li><b class="b">Blue — lull + RSI dip</b>: same lull, <i>and</i> RSI under 30. The strongest setup this page can show you.</li>
+        <li><b>Grey</b>: the market is too jumpy. Patience — a lull always comes.</li>
+      </ul>
+      <p>The chip shows the numbers in brackets, e.g. <i>"range 157% of avg"</i> — below 100% means quieter than usual, below 80% triggers the green light.</p>
+    </div>
+
+    <div class="card">
+      <h3>The three lines after you buy</h3>
+      <ul>
+        <li><b class="a">Amber — BOUGHT</b>: your entry price.</li>
+        <li><b class="g">Green — TARGET</b>: entry + 0.7%. Selling here keeps you <b>+0.5% after fees</b>. The "Distance to target" number counts down as price gets close.</li>
+        <li><b class="r">Red — STOP</b>: entry − 1%. If price touches it, sell immediately. Losses on this strategy grind down slowly — they don't bounce back in time.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h3>The buttons</h3>
+      <ul>
+        <li><b class="g">BUY</b> — puts all your USDT into BTC at the current live price. Real Bybit fees apply (~0.1%).</li>
+        <li><b class="r">SELL</b> — sells it all back to USDT (another real ~0.1% fee) and records the cycle.</li>
+        <li><b>reset session</b> — clears the stats (cycles, P&amp;L) only. Your real balances never change. Asks before it does.</li>
+      </ul>
+      <p>Your session is saved automatically on the server — close the tab, switch MacBooks, it is always the same session. Note: the buttons need you to be logged into Agent Zero on that browser.</p>
+    </div>
+
+    <div class="card">
+      <h3>The session panel</h3>
+      <ul>
+        <li><b>Equity</b> — what your Bybit account is worth right now (live balances).</li>
+        <li><b>Net vs start</b> — your total profit or loss since the last reset.</li>
+        <li><b>Cycles</b> — completed buy→sell round trips.</li>
+        <li><b>Wins / Losses</b> — how many cycles ended up vs down.</li>
+        <li><b>Fees paid</b> — real fees paid to Bybit. Watch this: it adds up fast if you overtrade.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>⭐ The golden rules</h3>
+    <ol>
+      <li><b>Never buy without a lull.</b> The green chip is your permission slip.</li>
+      <li><b>Never move the stop.</b> If the red line is hit, you sell. No "it'll come back".</li>
+      <li><b>Two cycles a day, maximum.</b> Then close the tab and live your life.</li>
+      <li><b>This is real money now.</b> Every click is final — size each trade so a loss is a lesson, not a wound.</li>
+    </ol>
+  </div>
+</div>
+
+<script>
+// ---- Shared session (server-side, same on every device) ----
+const API = '/api/plugins/paper_trading/paper_trade';
+let csrfToken = null;
+let S = null;          // server session state
+let lastData = null;   // paper_data.json payload
+
+async function getToken() {
+  if (csrfToken) return csrfToken;
+  const r = await fetch('/api/csrf_token', { credentials: 'same-origin' });
+  // Logged-out requests get redirected to /login (HTML), not a JSON 401.
+  if (r.redirected || !(r.headers.get('content-type') || '').includes('json'))
+    throw new Error('auth');
+  const d = await r.json();
+  if (!d.ok) throw new Error(d.error || 'csrf failed');
+  csrfToken = d.token;
+  return csrfToken;
+}
+
+async function api(action, extra) {
+  const token = await getToken();
+  const r = await fetch(API, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+    body: JSON.stringify(Object.assign({ action }, extra || {})),
+  });
+  if (r.status === 401 || r.status === 403) throw new Error('auth');
+  // Logged-out POSTs come back as the /login HTML page after a redirect.
+  if (r.redirected || !(r.headers.get('content-type') || '').includes('json'))
+    throw new Error('auth');
+  return r.json();
+}
+
+// One-time migration: if this browser holds an old local session, push it up.
+async function migrateLocal() {
+  try {
+    if (localStorage.getItem('paper_migrated')) return;
+    const raw = localStorage.getItem('paper_session_v1');
+    localStorage.setItem('paper_migrated', '1');
+    if (!raw) return;
+    const local = JSON.parse(raw);
+    if (!local || (local.cycles === 0 && !local.position && Math.abs(local.usdt - 861.99) < 0.01)) return;
+    await api('import_state', { state: local });
+  } catch (e) { /* server already has a session, fine */ }
+}
+
+// ---- Charts ----
+const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+  layout: { background: { color: '#161b22' }, textColor: '#8b949e' },
+  grid: { vertLines: { color: '#1c232d' }, horzLines: { color: '#1c232d' } },
+  timeScale: { timeVisible: true, secondsVisible: false },
+  rightPriceScale: { borderColor: '#2a3340' },
+});
+const candles = chart.addCandlestickSeries({
+  upColor: '#26a69a', downColor: '#ef5350', wickUpColor: '#26a69a',
+  wickDownColor: '#ef5350', borderVisible: false,
+});
+const rsichart = LightweightCharts.createChart(document.getElementById('rsichart'), {
+  layout: { background: { color: '#161b22' }, textColor: '#8b949e' },
+  grid: { vertLines: { color: '#1c232d' }, horzLines: { color: '#1c232d' } },
+  timeScale: { timeVisible: true, secondsVisible: false },
+  rightPriceScale: { borderColor: '#2a3340' },
+});
+const rsiLine = rsichart.addLineSeries({ color: '#4f9cf9', lineWidth: 1, priceLineVisible: false });
+const guide = rsichart.addLineSeries({ color: 'transparent', lastValueVisible: false, priceLineVisible: false });
+guide.createPriceLine({ price: 70, color: '#ef5350', lineStyle: 2, title: '70' });
+guide.createPriceLine({ price: 30, color: '#26a69a', lineStyle: 2, title: '30' });
+chart.timeScale().subscribeVisibleLogicalRangeChange(r => { if (r) rsichart.timeScale().setVisibleLogicalRange(r); });
+rsichart.timeScale().subscribeVisibleLogicalRangeChange(r => { if (r) chart.timeScale().setVisibleLogicalRange(r); });
+
+let lines = { bought: null, target: null, stop: null };
+function clearLines() {
+  for (const k of ['bought', 'target', 'stop'])
+    if (lines[k]) { candles.removePriceLine(lines[k]); lines[k] = null; }
+}
+function setLines(pos) {
+  clearLines();
+  if (!pos) return;
+  lines.bought = candles.createPriceLine({ price: pos.bought_at, color: '#e0a458', lineWidth: 2, lineStyle: 0, title: 'BOUGHT' });
+  lines.target = candles.createPriceLine({ price: pos.target, color: '#26a69a', lineWidth: 2, lineStyle: 2, title: 'TARGET' });
+  lines.stop = candles.createPriceLine({ price: pos.stop, color: '#ef5350', lineWidth: 2, lineStyle: 2, title: 'STOP' });
+}
+
+const $ = id => document.getElementById(id);
+const fmt = (n, d = 1) => n === null || n === undefined || isNaN(n) ? '—'
+  : Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+let lastPosKey = undefined;
+let recentTrades = [];
+
+// ---- Render ----
+function render() {
+  const d = lastData;
+  if (!d) return;
+  const price = d.price;
+  if (d.candles && d.candles.length) {
+    candles.setData(d.candles);
+    rsiLine.setData(d.candles.filter(c => c.rsi !== null).map(c => ({ time: c.time, value: c.rsi })));
+  }
+  $('price').textContent = price ? '$' + fmt(price) : '—';
+  const bw = d.buy_window || {};
+  $('rsi').textContent = 'RSI ' + (bw.rsi !== null && bw.rsi !== undefined ? fmt(bw.rsi) : '—');
+  const chip = $('signal');
+  chip.className = 'chip ' + (bw.deep ? 'deep' : bw.active ? 'on' : 'off');
+  chip.textContent = bw.deep ? '★ BUY WINDOW — lull + RSI dip'
+    : bw.active ? '✓ BUY WINDOW — lull'
+    : 'no buy window' + (bw.ratio != null ? ` (range ${fmt(bw.ratio * 100, 0)}% of avg)` : '');
+
+  if (!S) return;
+  $('equity').textContent = '$' + fmt(S.equity, 2);
+  const nv = S.net_vs_start;
+  $('netVs').textContent = (nv >= 0 ? '+' : '') + fmt(nv, 2) + ' USDT';
+  $('netVs').className = nv >= 0 ? 'up' : 'down';
+  $('cycles').textContent = S.cycles;
+  $('wl').textContent = S.wins + ' / ' + S.losses;
+  $('fees').textContent = '$' + fmt(S.fees_paid, 2);
+
+  const pos = S.position;
+  $('buyBtn').disabled = !!pos || !price;
+  $('sellBtn').disabled = !pos;
+  $('posCard').style.display = pos ? 'block' : 'none';
+  $('posHint').textContent = pos
+    ? 'Position open — watch the green TARGET line. Sell there, or sell at the red STOP line if it drops.'
+    : (bw.active ? 'Buy window is OPEN. If you like what you see, click BUY.' : 'No open position. Wait for a green BUY WINDOW signal, then click BUY.');
+
+  const posKey = pos ? pos.bought_at + ':' + pos.time : null;
+  if (posKey !== lastPosKey) { setLines(pos); lastPosKey = posKey; }
+
+  if (pos && price) {
+    $('boughtAt').textContent = '$' + fmt(pos.bought_at);
+    $('target').textContent = '$' + fmt(pos.target);
+    $('stop').textContent = '$' + fmt(pos.stop);
+    $('toTarget').textContent = fmt(((pos.target - price) / price) * 100, 2) + '%';
+    const unet = (price - pos.bought_at) * pos.btc - price * pos.btc * 0.001;
+    $('upnl').textContent = (unet >= 0 ? '+' : '') + fmt(unet, 2) + ' USDT';
+    $('upnl').className = unet >= 0 ? 'up' : 'down';
+  }
+
+  const tbl = $('trades');
+  tbl.innerHTML = '<tr><th>Buy</th><th>Sell</th><th>P&L</th></tr>';
+  recentTrades.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${fmt(r.bought_at, 0)}</td><td>${fmt(r.sold_at, 0)}</td><td class="${r.pnl >= 0 ? 'up' : 'down'}">${r.pnl >= 0 ? '+' : ''}${fmt(r.pnl, 2)}</td>`;
+    tbl.appendChild(tr);
+  });
+}
+
+// ---- Actions ----
+async function act(action) {
+  $('msg').textContent = 'working…';
+  try {
+    const r = await api(action);
+    if (r.ok) {
+      S = r.state;
+      recentTrades = r.recent || [];
+      $('msg').textContent = '';
+      render();
+    } else {
+      $('msg').textContent = r.error || 'failed';
+    }
+  } catch (e) {
+    $('msg').textContent = e.message === 'auth'
+      ? 'Log into Agent Zero on this browser first, then refresh.'
+      : 'request failed — check connection';
+  }
+}
+$('buyBtn').onclick = () => act('buy');
+$('sellBtn').onclick = () => act('sell');
+$('resetBtn').onclick = () => { if (confirm('Reset session stats? Real balances are not affected.')) act('reset'); };
+
+// ---- Poll ----
+async function refresh() {
+  try {
+    const r = await fetch('paper_data.json', { cache: 'no-store' });
+    lastData = await r.json();
+  } catch (e) {
+    $('signal').textContent = 'data feed unreachable';
+    return;
+  }
+  try {
+    const st = await api('get');
+    if (st.ok) { S = st.state; recentTrades = st.recent || []; }
+  } catch (e) {
+    if (e.message === 'auth') $('msg').textContent = 'Log into Agent Zero on this browser to use the buttons.';
+  }
+  render();
+}
+
+(async () => {
+  try { await migrateLocal(); } catch (e) {}
+  refresh();
+  setInterval(refresh, 3000);
+})();
+</script>
+</body>
+</html>

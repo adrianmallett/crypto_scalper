@@ -35,9 +35,10 @@ No more "profitable" trades that quietly lose money to fees.
 | **Circuit breaker** | 3 consecutive stop-losses → 24h pause |
 | **Buy buffer (1%)** | Reserves 1% of USDT for fees/slippage |
 | **Dust filter** | Ignores sub-0.0002 BTC balances |
+| **Lull buy-window gate** | Buys only while the paper dashboard's BUY WINDOW chip is on (volatility lull); fails safe if the feed is stale |
 
 ### Sell Target
-Fixed margin: sell at buy × **1.0075** (0.75% gross, ~0.55% net after fees).
+Fee-aware floor: sell only at buy × **1.010** (1.0% gross, ~0.8% net after the 0.2% round-trip taker fee). The old 1.0075 margin was deprecated in v3.3.0 — below the fee floor the bot holds.
 
 ---
 
@@ -61,6 +62,9 @@ Scaling ladder (proven in live use): $100 → $250 → $500 → 50% of account �
 | `tools/candles_bot.py` | Core bot — exchange connectivity, RSI logic, trade execution, state persistence |
 | `tools/data_writer.py` | Feeder — parses bot log, fetches candles, writes `data.json` every 5s (atomic rename) |
 | `tools/dash_v5.html` | Live dashboard — candlesticks, volume, RSI, buy/sell/stop-loss price lines, Cycles/Stop-Losses stat boxes, right-edge auto-follow, console |
+| `tools/paper_server.py` | Paper feed — public Bybit 1m candles, RSI + volatility-lull BUY WINDOW detection, writes `paper_data.json` every 5s (no API keys) |
+| `tools/paper.html` | Paper dashboard — candles + RSI pane, lull chip, BUY/SELL buttons, position card, session stats |
+| `tools/real_broker.py` | Optional manual-real broker — CLI `balance\|buy\|sell`, spends all free USDT / sells all free BTC above dust, keys from `.a0proj/secrets.env` (server-side only) |
 
 ---
 
@@ -89,6 +93,7 @@ python -m http.server 5080
 
 | Version | Change |
 |---------|--------|
+| **3.4.0** | Paper-trading stack (paper_server.py + paper.html with volatility-lull BUY WINDOW chip), optional manual real-order broker (real_broker.py), lull buy-window gate in candles_bot.py (only buys while the lull chip is on), daily cycle cap config (MAX_CYCLES) — bot itself stays off by default; the lull gate is armed-but-inactive unless the bot is restarted |
 | **3.3.0** | Net-P&L economics: sell floor buy × 1.010 (~0.8% net per win — backtest showed 0.6% floor was net-negative at real win rates), fee-aware net P&L accounting, dashboard shows real next-sell gate, circuit-breaker re-arm fix, live-computed Breaker chip |
 | **3.2.0** | Rolling circuit breaker (24h window), dashboard Breaker chip, server-side Max Day P&L, breaker state persistence fixes |
 | **3.1.0** | Dashboard upgrade: Cycles Today + Stop Losses stat boxes, right-edge auto-follow charts (re-entrancy-guarded zoom sync), RSI time-axis alignment fix + RSI/threshold lines extended to the right edge |
